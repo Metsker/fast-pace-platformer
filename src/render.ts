@@ -1,42 +1,34 @@
 import { Container, Sprite } from "pixi.js";
 import type { GlyphSet } from "./gfx/glyphs.ts";
 import { PALETTE } from "./tilemap.ts";
-import { BODY, SLOPE0, STEP, TILE, type Level, type Player } from "./sim.ts";
+import { K, ONEWAY, R, SLOPE0, SOLID, SPIKE, TILE, type Level, type Player, type Ring } from "./sim.ts";
 
-const TRAIL_N = 6;
-const TRAIL_GAP = 4; // sim steps between ghosts
+// Sonic 2's camera, plus the one thing Mania added.
+//
+// The scroll caps are not arbitrary: 180 px/s is exactly the running top speed and
+// 480 px/s is exactly the rolling cap, so the camera cannot fall behind by
+// construction. That relationship is why they are written as K.* and not as numbers.
+const DEAD_X = 4; // half of a 16 Genesis px horizontal window
+const AIR_Y = 8; // the player roams this far vertically before the camera follows
+const SLOW_AT = 240; // below this, grounded, the camera uses the slow cap
+const LEAD_GAIN = 0.1;
+const LEAD_MAX = 40; // a quarter of the view - at the roll cap this is the whole budget
+const LEAD_RATE = 3; // how fast the look-ahead itself slews, per second
 
-// white -> amber -> red. Tier is meant to be readable from color alone (DESIGN.md §1).
-const TIER_TINT = [PALETTE[23], PALETTE[16], PALETTE[15]];
-
-const CAM_GAIN = 0.35;
-const CAM_GAIN_Y = 0.1;
-// Look-ahead ceilings as a fraction of the view, so changing the zoom keeps the feel.
-const CAM_LEAD_X = 0.4;
-const CAM_LEAD_Y = 0.45;
-
-// The six filled ramp types the sheet ships: three gradients, two directions each.
-// Verified by cropping the cells, not by trusting the glyph names - TECH.md §8 warns
-// that `╱ ╲` are 26.6 degrees and half a cell tall, and that `▛ ▜ ▙ ▟` are dither.
-// Indexed by tile value - SLOPE0, so this must stay in the same order as
-// sim.ts SLOPE_CHARS / SLOPE_H: "uncCdDAaBb".
+// Indexed by tile value - SLOPE0, so this must stay in sim.ts SLOPE_CHARS order.
 const SLOPE_GLYPH = ["🭊", "🬿", "🭈", "🭆", "🭑", "🬽", "🭋", "🭅", "🭀", "🭐"];
 
-// Non-colliding scenery. Nothing uses this yet; it is what the slope gallery was.
-const DECOR_GLYPH: Record<string, string> = {};
-
 export type View = {
-  root: Container; // holds the integer world scale
-  world: Container; // holds the camera offset, in world px
-  player: Sprite;
-  trail: Sprite[];
-  hist: number[]; // flat [x, y, ...], most recent first
-  deaths: number; // last seen, so a respawn can drop the history instead of streaking
+  root: Container;
+  world: Container;
+  head: Sprite;
+  body: Sprite;
+  ball: Sprite;
+  rings: Sprite[];
+  scatter: Sprite[];
   camX: number;
   camY: number;
-  fallRate: number; // smoothed height loss, px/s
-  tileSprite: Map<number, Sprite>; // tile index -> sprite, for knocking platforms out
-  hidden: Sprite[]; // what is currently smashed, so a respawn can put it back
+  lead: number;
 };
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -46,139 +38,130 @@ export function buildView(lv: Level, glyphs: GlyphSet): View {
   const world = new Container();
   root.addChild(world);
 
-  // Built once, never re-flushed. Breaking a platform hides one sprite by index rather
-  // than rebuilding anything, which is why tileSprite exists.
-  const tileSprite = new Map<number, Sprite>();
-  // Solid and one-way are the same hatch family at different densities - ▓ is 75% of
-  // the cell, ▒ is 50% - so "lighter" reads as "less solid". Cool blue for one-way
-  // keeps them clear of the player's warm white/amber/red ramp.
+  // Built once and never re-flushed. Every glyph shares one atlas, so the whole level
+  // is essentially one draw call and the sprite count does not matter.
   const tiles = new Container();
   for (let ty = 0; ty < lv.h; ty++) {
     for (let tx = 0; tx < lv.w; tx++) {
       const t = lv.tiles[ty * lv.w + tx];
       if (!t) continue;
-      // Slopes are ground, so they take the ground tint - the terrain has to read as
-      // one surface. Decor stays green to mean "this does not collide".
       const glyph =
-        t === 1 ? "▓" : t === 2 ? "▒" : t >= SLOPE0 ? SLOPE_GLYPH[t - SLOPE0] : DECOR_GLYPH[lv.rows[ty][tx]];
+        t === SOLID ? "▓" : t === ONEWAY ? "▒" : t === SPIKE ? "‸" : SLOPE_GLYPH[t - SLOPE0];
       if (!glyph) continue;
       const s = new Sprite(glyphs[glyph]);
       s.position.set(tx * TILE, ty * TILE);
-      s.tint = t === 2 ? PALETTE[22] : t === 3 ? PALETTE[21] : PALETTE[11];
-      if (t === 2) tileSprite.set(ty * lv.w + tx, s); // only one-ways ever break
+      // Slopes are ground and take the ground tint - terrain has to read as one surface.
+      s.tint = t === ONEWAY ? PALETTE[22] : t === SPIKE ? PALETTE[15] : PALETTE[11];
       tiles.addChild(s);
     }
   }
   world.addChild(tiles);
 
-  const trail: Sprite[] = [];
-  for (let n = 0; n < TRAIL_N; n++) {
-    const s = new Sprite(glyphs["◉"]);
+  const marks = new Container();
+  for (const c of lv.checkpoints) {
+    const s = new Sprite(glyphs["★"]);
+    s.position.set(c.x - TILE / 2, c.y - TILE / 2);
+    s.tint = PALETTE[16];
+    marks.addChild(s);
+  }
+  if (lv.goal) {
+    const s = new Sprite(glyphs["⌂"]);
+    s.position.set(lv.goal.x - TILE / 2, lv.goal.y - TILE / 2);
+    s.tint = PALETTE[21];
+    marks.addChild(s);
+  }
+  world.addChild(marks);
+
+  const ring = (): Sprite => {
+    const s = new Sprite(glyphs["⊙"]);
+    s.tint = PALETTE[17];
     s.roundPixels = true;
-    s.alpha = 0;
-    trail.push(s);
     world.addChild(s);
-  }
+    return s;
+  };
+  const rings = lv.rings.map((r) => {
+    const s = ring();
+    s.position.set(r.x - TILE / 2, r.y - TILE / 2);
+    return s;
+  });
+  // One pool, sized to the scatter cap - a hit can never produce more than this.
+  const scatter = Array.from({ length: K.ringScatterMax }, () => {
+    const s = ring();
+    s.visible = false;
+    return s;
+  });
 
-  const player = new Sprite(glyphs["◉"]);
-  player.roundPixels = true;
-  world.addChild(player);
+  const actor = (glyph: string): Sprite => {
+    const s = new Sprite(glyphs[glyph]);
+    s.roundPixels = true;
+    s.tint = PALETTE[19];
+    world.addChild(s);
+    return s;
+  };
+  const head = actor("⚉");
+  const body = actor("▲");
+  const ball = actor("◉");
 
-  return { root, world, player, trail, hist: [], deaths: 0, camX: 0, camY: 0, fallRate: 0, tileSprite, hidden: [] };
-}
-
-export function pushTrail(v: View, p: Player): void {
-  // A respawn teleports to the summit; keeping the history would draw a ghost line all
-  // the way back down the mountain until the buffer refilled.
-  if (p.deaths !== v.deaths) {
-    v.deaths = p.deaths;
-    v.hist.length = 0;
-  }
-  v.hist.unshift(p.x, p.y);
-  // +2 samples: the oldest ghost interpolates between TRAIL_N * TRAIL_GAP and the
-  // sample behind it, so the buffer has to hold that one too.
-  v.hist.length = Math.min(v.hist.length, (TRAIL_N * TRAIL_GAP + 2) * 2);
+  return { root, world, head, body, ball, rings, scatter, camX: 0, camY: 0, lead: 0 };
 }
 
 export function syncView(
   v: View,
   p: Player,
+  lv: Level,
+  scattered: Ring[],
   alpha: number,
   dt: number,
-  lv: Level,
   viewW: number,
   viewH: number,
 ): void {
-  // Platforms the sim knocked out since the last frame. -1 means a respawn put the
-  // mountain back.
-  for (const idx of lv.broken) {
-    if (idx < 0) {
-      for (const s of v.hidden) s.visible = true;
-      v.hidden.length = 0;
-      continue;
-    }
-    const s = v.tileSprite.get(idx);
-    if (!s || !s.visible) continue;
-    s.visible = false;
-    v.hidden.push(s);
-  }
-  lv.broken.length = 0;
-
   const x = p.px + (p.x - p.px) * alpha;
   const y = p.py + (p.y - p.py) * alpha;
 
-  // The sprite is 8x8 over a 6x6 body, so it overhangs by a pixel on each side.
-  v.player.position.set(x - (TILE - BODY) / 2, y - (TILE - BODY) / 2);
-  v.player.tint = TIER_TINT[p.tier];
-
-  // Ghosts interpolate on the same alpha as the player. Reading raw history instead pins
-  // them to sim-step boundaries while the player and the camera both move in render
-  // time, so at a dead-constant 700 px/s the gap to the last ghost still swung 135-191px.
-  // Same lerp, one sample older: hist[i] is the newer of the pair, hist[j] the older.
-  for (let n = 0; n < v.trail.length; n++) {
-    const i = (n + 1) * TRAIL_GAP * 2;
-    const j = i + 2;
-    const s = v.trail[n];
-    if (j + 1 >= v.hist.length) {
-      s.alpha = 0;
-      continue;
-    }
-    const gx = v.hist[j] + (v.hist[i] - v.hist[j]) * alpha;
-    const gy = v.hist[j + 1] + (v.hist[i + 1] - v.hist[j + 1]) * alpha;
-    s.position.set(gx - (TILE - BODY) / 2, gy - (TILE - BODY) / 2);
-    s.tint = TIER_TINT[p.tier];
-    s.alpha = 0.5 * (1 - n / v.trail.length);
+  // Ball form is both rolling and jumping, and it is 5px shorter - so the two sprite
+  // sets cannot share an anchor. Both hang off the feet, which is what does not move.
+  const foot = y + (p.rolling ? R.rollH : R.h);
+  const flash = p.invuln > 0 && Math.floor(p.invuln * 30) % 2 === 0;
+  v.ball.visible = p.rolling && !flash;
+  v.head.visible = v.body.visible = !p.rolling && !flash;
+  if (p.rolling) {
+    v.ball.position.set(x - TILE / 2, foot - TILE);
+  } else {
+    // Two glyphs cover 16 of the body's 19px. Anchor at the feet and let the missing
+    // 3px come off the top, or the whole character floats above the ground it is on.
+    v.head.position.set(x - TILE / 2, foot - TILE * 2);
+    v.body.position.set(x - TILE / 2, foot - TILE);
   }
 
-  // Look-ahead scaled by velocity: at 960 px/s a centered camera leaves 0.2s of
-  // reaction time, which is roughly nothing. Snap forward fast, drift back slow.
-  const leadX = viewW * CAM_LEAD_X;
-  const targetX = x + BODY / 2 - viewW / 2 + clamp(p.vx * CAM_GAIN, -leadX, leadX);
+  for (let n = 0; n < v.rings.length; n++) v.rings[n].visible = !lv.rings[n].taken;
+  for (let n = 0; n < v.scatter.length; n++) {
+    const s = v.scatter[n];
+    const r = scattered[n];
+    s.visible = !!r;
+    if (r) s.position.set(r.x - TILE / 2, r.y - TILE / 2);
+  }
 
-  // Look-ahead comes from height loss, not p.vy: on a slope the attachment zeroes vy
-  // every step, so vy says "not falling" at 600 px/s downhill. Smoothed, because the
-  // raw per-step delta is a staircase - the slope table is integer px per column, so
-  // one step drops 3px and the next 5 - and syncView samples only the last sim step.
-  v.fallRate += (Math.max(0, (p.y - p.py) / STEP) - v.fallRate) * (1 - Math.pow(1 - 0.12, dt * 60));
-  const fall = clamp(v.fallRate * CAM_GAIN_Y, 0, viewH * CAM_LEAD_Y);
+  // Look-ahead, the one deviation from Sonic 2. It slews rather than snapping, or
+  // turning around whips the whole world across the screen.
+  const want = clamp(p.vx * LEAD_GAIN, -LEAD_MAX, LEAD_MAX);
+  v.lead += (want - v.lead) * (1 - Math.pow(0.5, dt * LEAD_RATE));
 
-  // Anchor to the last ground so hops do not shake the frame, but follow the player
-  // down the moment they are below it. groundY is a raw sim value while y is
-  // interpolated, so it is shifted into the same timebase - otherwise the anchor wins
-  // every grounded frame and the camera steps in whole sim ticks, 8px at a time.
-  const anchorY = Math.max(p.groundY - (p.y - y), y);
-  const targetY = anchorY + BODY / 2 - viewH / 2 + fall;
+  const fast = !p.grounded || Math.abs(p.gsp) >= SLOW_AT;
+  const cap = (fast ? K.rollCap : K.topSpeed) * dt;
 
-  const forward = Math.sign(targetX - v.camX) === Math.sign(p.vx || 1);
-  v.camX += (targetX - v.camX) * (1 - Math.pow(1 - (forward ? 0.2 : 0.06), dt * 60));
-  v.camY += (targetY - v.camY) * (1 - Math.pow(1 - 0.2, dt * 60));
+  const dx = x - viewW / 2 + v.lead - v.camX;
+  if (Math.abs(dx) > DEAD_X) v.camX += Math.sign(dx) * Math.min(Math.abs(dx) - DEAD_X, cap);
 
-  const worldW = lv.w * TILE;
-  const worldH = lv.h * TILE;
-  v.camX = clamp(v.camX, 0, Math.max(0, worldW - viewW));
-  v.camY = worldH > viewH ? clamp(v.camY, 0, worldH - viewH) : (worldH - viewH) / 2;
+  // Grounded the player is pinned to the center line; airborne they roam a window, so
+  // a hop does not shake the frame but a real fall is followed.
+  const slack = p.grounded ? 0 : AIR_Y;
+  const dy = y - viewH / 2 - v.camY;
+  if (Math.abs(dy) > slack) v.camY += Math.sign(dy) * Math.min(Math.abs(dy) - slack, cap);
 
-  // Camera stays a float. roundPixels on the sprites keeps edges crisp without
-  // juddering the whole world against the pixel grid (TECH.md §6).
+  v.camX = clamp(v.camX, 0, Math.max(0, lv.w * TILE - viewW));
+  v.camY = clamp(v.camY, 0, Math.max(0, lv.h * TILE - viewH));
+
+  // The camera stays a float; roundPixels on the sprites keeps edges crisp without
+  // juddering the whole world against the pixel grid.
   v.world.position.set(-v.camX, -v.camY);
 }

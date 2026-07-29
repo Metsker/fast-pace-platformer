@@ -1,15 +1,19 @@
 import { Application, Text } from "pixi.js";
 import { loadGlyphs } from "./gfx/glyphs.ts";
 import { PALETTE } from "./tilemap.ts";
-import { BASE_SPEED, STEP, TOP_SPEED, newPlayer, parseLevel, respawn, step, type Input } from "./sim.ts";
-import { TEST_LEVEL } from "./levels.ts";
-import { buildView, pushTrail, syncView } from "./render.ts";
+import { K, STEP, TILE, kill, newPlayer, parseLevel, step, type Input, type Ring } from "./sim.ts";
+import { ACT_1 } from "./levels.ts";
+import { buildView, syncView } from "./render.ts";
 
-const VIEW_W = 640;
-const VIEW_H = 360;
+// 20 x 14 tiles, the Genesis framing at 1 block per tile. Not 16:9 - pillarboxed, and
+// deliberately so: the reaction budget at the 480 px/s roll cap is what the level
+// design is built around, and a wider view hands it away for free.
+const VIEW_W = 160;
+const VIEW_H = 112;
 
-const level = parseLevel(TEST_LEVEL);
+const level = parseLevel(ACT_1);
 const player = newPlayer(level);
+const scattered: Ring[] = [];
 const input: Input = { x: 0, down: false, jump: false, jumpDown: false };
 
 const app = new Application();
@@ -37,7 +41,7 @@ addEventListener("keydown", (e) => {
   if (e.repeat) return;
   held.add(e.code);
   if (JUMP.includes(e.code)) input.jumpDown = true;
-  if (e.code === "KeyR") respawn(player, level);
+  if (e.code === "KeyR") kill(player, level);
   e.preventDefault();
 });
 addEventListener("keyup", (e) => held.delete(e.code));
@@ -46,30 +50,36 @@ const any = (codes: string[]) => codes.some((c) => held.has(c));
 
 let acc = 0;
 app.ticker.add((t) => {
-  input.x = (any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0) as -1 | 0 | 1;
+  input.x = ((any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0)) as -1 | 0 | 1;
   input.down = any(DOWN);
   input.jump = any(JUMP);
 
-  // Fixed timestep, clamped so a tab-switch does not spiral (TECH.md §3).
+  // Fixed timestep, clamped so a tab-switch does not spiral.
   acc += Math.min(t.deltaMS, 250) / 1000;
   while (acc >= STEP) {
-    step(player, input, level);
-    pushTrail(view, player);
+    step(player, input, level, scattered);
     acc -= STEP;
     input.jumpDown = false;
   }
 
-  syncView(view, player, acc / STEP, t.deltaMS / 1000, level, VIEW_W, VIEW_H);
+  syncView(view, player, level, scattered, acc / STEP, t.deltaMS / 1000, VIEW_W, VIEW_H);
 
-  const speed = Math.abs(player.vx);
-  const bar = "█".repeat(Math.round((speed / TOP_SPEED) * 24)).padEnd(24, "░");
-  const descended = Math.max(0, (player.y - level.spawn.y) / 8);
-  const state = player.diving ? "DIVE" : player.grounded ? "ground" : player.vy > 0 ? "FALLING +" : "rising";
+  const gsp = Math.abs(player.grounded ? player.gsp : player.vx);
+  const mode = player.spinning
+    ? `SPINDASH ${player.spinRev.toFixed(1)}`
+    : player.rolling
+      ? player.grounded
+        ? "rolling"
+        : "ball"
+      : player.grounded
+        ? "running"
+        : "air";
+  const mins = Math.floor(player.time / 60);
   hud.text =
-    `${speed.toFixed(0)} px/s   ${(speed / VIEW_W).toFixed(2)} screens/s   ` +
-    (speed > BASE_SPEED ? `+${(speed - BASE_SPEED).toFixed(0)} over cruise` : "cruise") +
-    `\n${bar}  ${state}   descended ${descended.toFixed(0)} of ${level.h} tiles\n` +
-    `arrows move  ·  space jump / air jump  ·  down dive  ·  r respawn`;
+    `RINGS ${String(player.rings).padStart(3)}    TIME ${mins}:${String(Math.floor(player.time % 60)).padStart(2, "0")}` +
+    `\n${gsp.toFixed(0).padStart(3)} px/s  ${(gsp / TILE).toFixed(1)} tiles/s   ${mode}` +
+    (gsp > K.topSpeed ? `   +${(gsp - K.topSpeed).toFixed(0)} over running` : "") +
+    (player.done ? "\nACT CLEAR" : "\narrows move  ·  down+space spindash  ·  down roll  ·  space jump  ·  r restart");
 });
 
 function resize() {
@@ -81,4 +91,4 @@ addEventListener("resize", resize);
 resize();
 
 // Exposed so Playwright can inspect the live scene graph and sim state.
-Object.assign(window, { app, sim: { player, level, view } });
+Object.assign(window, { app, sim: { player, level, view, scattered } });
