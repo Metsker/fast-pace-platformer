@@ -135,18 +135,15 @@ function toggleEdit(): void {
   } else {
     zoom = fit; // play always gets the designed framing back
     view.root.scale.set(zoom);
-    // Play from where you were looking rather than from spawn. The loop between an edit
-    // and the jump it changes is the only thing an editor is for.
-    player.x = player.px = ed.camX + VIEW_W / 2;
-    player.y = player.py = ed.camY + VIEW_H / 2;
-    player.vx = player.vy = player.gsp = 0;
-    player.grounded = false;
-    player.warps++; // a teleport, so the camera cuts instead of scrolling across the act
+    // Leaving the editor starts the level, which means starting it where the level says.
+    // This used to drop the player at the camera instead, which quietly beat every spawn
+    // the author had just painted.
+    restart(player, level, scattered);
   }
 }
 
-// The wheel pans, the same axes wasd covers: shift for horizontal, and ctrl (which is
-// also what a trackpad pinch sends) to zoom about the cursor.
+// Shift-scroll zooms, plain scroll pans. Ctrl is here too because that is what a
+// trackpad pinch sends, and a pinch that panned instead of zooming would be a surprise.
 app.canvas.addEventListener(
   "wheel",
   (e) => {
@@ -154,7 +151,7 @@ app.canvas.addEventListener(
     e.preventDefault();
     const k = e.deltaMode === 1 ? 16 : 1; // lines vs pixels
     const dy = e.deltaY * k;
-    if (e.ctrlKey || e.metaKey) {
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
       const next = clamp(zoom + (dy < 0 ? 1 : -1), 1, fit * 2);
       if (next === zoom) return;
       // Pin the world point under the cursor, or a zoom walks the level out from under it.
@@ -162,8 +159,6 @@ app.canvas.addEventListener(
       ed.camY += e.offsetY / zoom - e.offsetY / next;
       zoom = next;
       view.root.scale.set(zoom);
-    } else if (e.shiftKey) {
-      ed.camX += dy / zoom;
     } else {
       ed.camX += (e.deltaX * k) / zoom;
       ed.camY += dy / zoom;
@@ -171,6 +166,20 @@ app.canvas.addEventListener(
   },
   { passive: false },
 );
+
+// Holding the wheel down drags the level around. movementX is already in screen px, so
+// the world moves exactly with the cursor at any zoom.
+app.canvas.addEventListener("pointerdown", (e) => {
+  if (!ed.on || e.button !== 1) return;
+  e.preventDefault(); // or the middle click starts the browser's autoscroll
+  app.canvas.setPointerCapture(e.pointerId);
+});
+app.canvas.addEventListener("pointermove", (e) => {
+  if (!ed.on || !(e.buttons & 4)) return;
+  ed.camX -= e.movementX / zoom;
+  ed.camY -= e.movementY / zoom;
+});
+app.canvas.addEventListener("auxclick", (e) => ed.on && e.preventDefault());
 
 let acc = 0;
 app.ticker.add((t) => {

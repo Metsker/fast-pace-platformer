@@ -3,7 +3,13 @@
 // history lives in git. Editing is a string splice plus a re-parse.
 
 import { TILE } from "./sim.ts";
+import { ACT_1 } from "./levels.ts";
 import { getToken, list, load, save, setToken } from "./store.ts";
+
+// The generated act, bundled. It keeps the list from ever being empty and keeps the game
+// startable when GitHub is unreachable or rate-limited - without it a failed fetch means
+// no level at all, and there is nothing to render.
+const BUILTIN = "act-1";
 
 // Label per paintable char. The slope pieces are `SLOPE_CHARS` in sim.ts, and they are
 // exposed raw rather than as a smart ramp tool - a climb has to start one row above a
@@ -98,41 +104,51 @@ export async function initEditor(opts: {
 
   // --- level i/o ---------------------------------------------------------------
 
+  function show(name: string, rows: string[], sha?: string): void {
+    ed.name = name;
+    ed.sha = sha;
+    opts.setLevel(rows);
+    pick.value = name;
+    history.replaceState(null, "", `?lvl=${encodeURIComponent(name)}`);
+  }
+
   async function open(name: string): Promise<void> {
     try {
       say(`loading ${name}...`);
       const f = await load(name);
-      ed.name = name;
-      ed.sha = f.sha;
-      opts.setLevel(f.rows);
-      pick.value = name;
-      history.replaceState(null, "", `?lvl=${encodeURIComponent(name)}`);
+      show(name, f.rows, f.sha);
       say(`${name} - ${f.rows.length} rows`);
     } catch (e) {
-      say(String((e as Error).message), true);
+      if (name !== BUILTIN) return say(String((e as Error).message), true);
+      // A copy: the editor splices rows in place, and ACT_1 is a module constant that
+      // every later fallback would inherit the edits of.
+      show(name, [...ACT_1], undefined);
+      say(`${name} - built in, not fetched`);
     }
   }
 
   async function refresh(): Promise<string[]> {
+    let names: string[] = [];
     try {
-      const names = await list();
-      pick.replaceChildren(...names.map((n) => new Option(n, n, false, n === ed.name)));
-      $("menu-list").replaceChildren(
-        ...names.map((n) => {
-          const b = document.createElement("button");
-          b.textContent = n;
-          b.onclick = () => {
-            open(n);
-            showMenu(false);
-          };
-          return b;
-        }),
-      );
-      return names;
+      names = await list();
     } catch (e) {
       say(String((e as Error).message), true);
-      return [];
     }
+    if (!names.includes(BUILTIN)) names = [BUILTIN, ...names];
+
+    pick.replaceChildren(...names.map((n) => new Option(n, n, false, n === ed.name)));
+    $("menu-list").replaceChildren(
+      ...names.map((n) => {
+        const b = document.createElement("button");
+        b.textContent = n;
+        b.onclick = () => {
+          open(n);
+          showMenu(false);
+        };
+        return b;
+      }),
+    );
+    return names;
   }
 
   pick.onchange = () => open(pick.value);
@@ -185,13 +201,16 @@ export async function initEditor(opts: {
     opts.painted(tx, ty, ch, row[tx]);
   };
 
+  // Left paints and right erases; the middle button is the pan drag and must not paint.
+  const PAINTING = 1 | 2;
+
   opts.canvas.addEventListener("pointerdown", (e) => {
-    if (!ed.on) return;
+    if (!ed.on || !(e.buttons & PAINTING)) return;
     opts.canvas.setPointerCapture(e.pointerId);
     paint(e);
   });
   opts.canvas.addEventListener("pointermove", (e) => {
-    if (ed.on && e.buttons) paint(e);
+    if (ed.on && e.buttons & PAINTING) paint(e);
   });
   opts.canvas.addEventListener("contextmenu", (e) => ed.on && e.preventDefault());
 
