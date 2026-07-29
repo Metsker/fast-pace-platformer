@@ -80,10 +80,13 @@ const ramp = chunk((set) => {
 
 // --- band 0, the upper route -------------------------------------------------
 
-const shelf = (x0: number, x1: number, rings: boolean) =>
+// Whatever sits on a shelf has to fit *on* it. The first version placed rings and a star
+// post at fixed offsets, which put both past the end of the short shelf and left them
+// hanging in the air - so callers pass what they want and own the extent.
+const shelf = (x0: number, x1: number, extra?: (set: Set) => void) =>
   chunk((set) => {
     box(set, x0, SHELF, x1, SHELF + 1, "=");
-    if (rings) ringRow(set, x0 + 2, SHELF - 1, 6);
+    extra?.(set);
   });
 
 const CHUNKS: Record<string, string[]> = {
@@ -113,10 +116,15 @@ const CHUNKS: Record<string, string[]> = {
   }),
   Z: flat((set) => set(8, GROUND - 1, "G")),
 
-  // upper route
-  y: shelf(4, W - 1, false),
-  T: shelf(0, W - 1, true),
-  t: shelf(0, 9, true),
+  // upper route. The star post has to be up here too: the shelf ends above the lower
+  // route's checkpoint and drops you *past* it through the air, 66px over its head, so
+  // one checkpoint on the ground is one the fast line never touches.
+  y: shelf(4, W - 1),
+  T: shelf(0, W - 1, (set) => {
+    ringRow(set, 2, SHELF - 1, 6);
+    set(14, SHELF - 1, "P");
+  }),
+  t: shelf(0, 9, (set) => ringRow(set, 2, SHELF - 1, 4)),
 };
 
 // Each row is one band; each character is one chunk. Read it as a map.

@@ -182,6 +182,23 @@ line, never a death.
 Each shelf skips a hazard: the first skips a spike patch, the second skips a pit. The fast
 line is also the safe one, and you only get it by arriving fast.
 
+### Markers, and why checkpoints sit on both routes
+
+A marker cell means "a body stands here", which is **feet on the cell's bottom edge** -
+not the cell's centre. Deriving that in two places put checkpoints 5.5px underground: a
+respawn there falls through the world, dies, and respawns into the same rock. One
+`standY` now serves the spawn and every checkpoint, and the harness asserts that every
+point the game can put a body back at is a point a body can stand at.
+
+Two placement bugs of the same shape came out with it, and both are the format inviting
+it: anything sitting *on* a platform has to fit on that platform. The short shelf spans
+10 tiles, and its star post and two of its six rings were authored at fixed offsets that
+put them past its end, hanging in the air.
+
+Checkpoints go on **both** routes. A single one on the ground is one the fast line never
+touches: the shelf ends above it and drops you past it through the air, 66px over its
+head.
+
 ## 8. Camera
 
 Sonic 2's structure - an 8px horizontal deadzone, the player pinned to the center line
@@ -210,11 +227,18 @@ most within 1%; the residual is 120Hz discretisation.
 | roll cost on 26.6 up | -105.08 px/s2 | -105.08 |
 
 A full run of act 1 by a bot that holds right, rolls into every descent and jumps when the
-floor ahead stops: **goal reached in 27.1s, 83% grounded, 29% rolling, top ground speed
-300 px/s, 20 rings, no deaths, and it takes the upper shelf.**
+floor ahead stops: **goal reached in 14.2s, 80% grounded, 39% rolling, top ground speed
+300 px/s, 26 rings, no deaths, and it takes the upper shelf.**
 
-That bot is deliberately stupid - it never spindashes and never brakes. 29% rolling from
+That bot is deliberately stupid - it never spindashes and never brakes. 39% rolling from
 terrain alone is the number to watch: it says the grades are doing their job.
+
+An earlier version of it read 27.1s, and the difference was entirely the bot. Its
+floor-ahead probe used `solidAt`, which reports one-way platforms as non-solid - correct,
+because they must never block a wall or a ceiling, and wrong for "is there floor here".
+So it read every shelf as a hole and jumped on every step, bouncing the length of the
+upper route without once landing on it. **A test fixture that models the world differently
+from the player measures a game nobody plays.**
 
 ## 10. Open
 

@@ -8,7 +8,7 @@
 // The second runs the real act, because the seams between chunks are where a body
 // wedges and no synthetic slope reproduces them.
 
-import { K, R, STEP, TILE, newPlayer, parseLevel, solidAt, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
+import { K, R, STEP, TILE, kill, newPlayer, parseLevel, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
 import { ACT_1 } from "../src/levels.ts";
 
 const DEG = Math.PI / 180;
@@ -238,6 +238,73 @@ near("roll cost on 26.6 up, px/s2", rollAccel(-1, 320), -(K.slopeRollUp * Math.s
   ok("spindash beats running", p.gsp > K.topSpeed, `${(p.gsp / K.topSpeed).toFixed(2)}x top speed`);
 }
 
+// --- a player, roughly -----------------------------------------------------
+// Nothing clever: hold right, roll into anything that descends, jump when the floor
+// ahead stops. Deliberately stupid - it never spindashes and never brakes - so what it
+// gets through is a floor on what the act asks of a person, not a ceiling.
+//
+// The floor probe cannot be solidAt: that deliberately reports one-way platforms as
+// non-solid, because they must never block a wall or a ceiling. A bot asking "is there
+// floor ahead" with it sees every shelf as a hole and jumps on every step, bouncing
+// across the upper route without ever landing on it. A player looking at the screen
+// sees a platform, so the bot has to as well - any non-empty tile counts.
+const floorAt = (lv: Level, x: number, y: number): boolean => {
+  const tx = Math.floor(x / TILE);
+  const ty = Math.floor(y / TILE);
+  if (tx < 0 || tx >= lv.w || ty < 0 || ty >= lv.h) return false;
+  return lv.tiles[ty * lv.w + tx] !== 0;
+};
+
+function bot(p: Player, i: Input, lv: Level, bag: Ring[]): void {
+  i.down = p.grounded && p.angle < -0.1 && Math.abs(p.gsp) > 90;
+  let hole = p.grounded && Math.abs(p.angle) <= 0.2;
+  if (hole) for (let d = 0; d < 40 && hole; d += 4) hole = !floorAt(lv, p.x + 26, p.y + 11 + d);
+  i.jump = i.jumpDown = hole;
+  step(p, i, lv, bag);
+  i.jumpDown = false;
+}
+
+// --- respawn points --------------------------------------------------------
+{
+  // Every point the game can put a body back at has to be a point a body can stand at.
+  // A respawn 5.5px into the rock is not a stuck player, it is an unrecoverable death
+  // loop: you fall through the world, die, and respawn into the same rock.
+  const lv = parseLevel(ACT_1);
+  const p = newPlayer(lv);
+  const bag: Ring[] = [];
+  const points = [{ x: lv.spawn.x, standY: lv.spawn.y, what: "spawn" }, ...lv.checkpoints.map((c) => ({ x: c.x, standY: c.standY, what: `checkpoint col ${(c.x / TILE).toFixed(0)}` }))];
+  const bad: string[] = [];
+  for (const pt of points) {
+    p.respawnX = pt.x;
+    p.respawnY = pt.standY;
+    kill(p, lv);
+    const deaths = p.deaths;
+    for (let k = 0; k < 240; k++) step(p, NO, lv, bag);
+    if (!p.grounded || p.deaths > deaths || Math.abs(p.y - pt.standY) > TILE) bad.push(pt.what);
+  }
+  ok("every respawn point is standable", bad.length === 0, bad.length ? `sunk: ${bad.join(", ")}` : `${points.length} checked`);
+}
+{
+  // And the other half: that touching a checkpoint stores a standable point. The check
+  // above would still pass if the trigger wrote the star's draw position instead.
+  const lv = parseLevel(ACT_1);
+  const p = newPlayer(lv);
+  const bag: Ring[] = [];
+  // On `hit`, not on respawnY: the lower route's checkpoint sits on the same ground row
+  // as the spawn, so its standY is byte-identical and watching that value sees nothing.
+  const i = input({ x: 1 });
+  for (let k = 0; k < 120 * 60 && !lv.checkpoints.some((c) => c.hit); k++) bot(p, i, lv, bag);
+  const got = lv.checkpoints.find((c) => c.hit);
+  kill(p, lv);
+  const deaths = p.deaths;
+  for (let k = 0; k < 240; k++) step(p, NO, lv, bag);
+  ok(
+    "a touched checkpoint respawns you standing",
+    !!got && p.grounded && p.deaths === deaths && Math.abs(p.y - got.standY) < TILE,
+    got ? `col ${(got.x / TILE).toFixed(0)}, landed row ${(p.y / TILE).toFixed(1)}, grounded ${p.grounded}` : "the bot reached none",
+  );
+}
+
 // --- the act ---------------------------------------------------------------
 console.log("\nact 1  (a bot holding right, rolling into descents, jumping holes)\n");
 {
@@ -250,18 +317,8 @@ console.log("\nact 1  (a bot holding right, rolling into descents, jumping holes
   let top = 0;
   let high = Infinity;
   let n = 0;
-  // Nothing clever: roll into anything that descends, and jump when the floor ahead
-  // stops. That is enough of a player to tell whether the act is passable.
-  const hole = () => {
-    if (!p.grounded || Math.abs(p.angle) > 0.2) return false;
-    for (let d = 0; d < 40; d += 4) if (solidAt(lv, p.x + 26, p.y + 11 + d)) return false;
-    return true;
-  };
   for (; n < 120 * 200 && !p.done; n++) {
-    i.down = p.grounded && p.angle < -0.1 && Math.abs(p.gsp) > 90;
-    i.jumpDown = i.jump = hole();
-    step(p, i, lv, bag);
-    i.jumpDown = false;
+    bot(p, i, lv, bag);
     if (p.grounded) grounded++;
     if (p.rolling) rolling++;
     top = Math.max(top, Math.abs(p.gsp));

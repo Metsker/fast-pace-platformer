@@ -98,7 +98,7 @@ export type Level = {
   rows: string[];
   spawn: { x: number; y: number };
   rings: { x: number; y: number; taken: boolean }[];
-  checkpoints: { x: number; y: number; hit: boolean }[];
+  checkpoints: { x: number; y: number; standY: number; hit: boolean }[];
   goal: { x: number; y: number } | null;
 };
 
@@ -132,6 +132,12 @@ export type Player = {
 
 export type Input = { x: -1 | 0 | 1; down: boolean; jump: boolean; jumpDown: boolean };
 
+// The one conversion from a marker cell to a player position: feet on the cell's bottom
+// edge, which is the surface underneath it. The spawn and every checkpoint go through
+// this. Deriving it twice is how checkpoints ended up 5.5px underground - the cell
+// *center* is not where a body stands, and a respawn there falls through the world.
+const standY = (ty: number) => ty * TILE + TILE - R.h;
+
 export function parseLevel(rows: string[]): Level {
   const w = Math.max(...rows.map((r) => r.length));
   const h = rows.length;
@@ -142,9 +148,11 @@ export function parseLevel(rows: string[]): Level {
       const ch = row[x];
       const cx = x * TILE + TILE / 2;
       const cy = y * TILE + TILE / 2;
-      if (ch === "@") lv.spawn = { x: cx, y: y * TILE + TILE - R.h };
+      if (ch === "@") lv.spawn = { x: cx, y: standY(y) };
       else if (ch === "o") lv.rings.push({ x: cx, y: cy, taken: false });
-      else if (ch === "P") lv.checkpoints.push({ x: cx, y: cy, hit: false });
+      // x/y is where the star is drawn and what the pickup test uses; standY is where a
+      // body actually goes. They are not the same point and must not be conflated.
+      else if (ch === "P") lv.checkpoints.push({ x: cx, y: cy, standY: standY(y), hit: false });
       else if (ch === "G") lv.goal = { x: cx, y: cy };
       else if (ch === "#") tiles[y * w + x] = SOLID;
       else if (ch === "=") tiles[y * w + x] = ONEWAY;
@@ -525,7 +533,7 @@ export function step(p: Player, i: Input, lv: Level, scattered: Ring[]): void {
     if (c.hit || !near(p, c.x, c.y)) continue;
     c.hit = true;
     p.respawnX = c.x;
-    p.respawnY = c.y;
+    p.respawnY = c.standY;
   }
   if (lv.goal && near(p, lv.goal.x, lv.goal.y)) p.done = true;
 
