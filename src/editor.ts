@@ -2,7 +2,10 @@
 // undo stack: the rows ARE the format, parseLevel is already the only reader, and the
 // history lives in git. Editing is a string splice plus a re-parse.
 
-import { TILE } from "./sim.ts";
+import { SLOPE_CHARS, TILE } from "./sim.ts";
+import { PALETTE } from "./tilemap.ts";
+import { SLOPE_GLYPH } from "./render.ts";
+import type { GlyphSet } from "./gfx/glyphs.ts";
 import { ACT_1 } from "./levels.ts";
 import { getToken, list, load, save, setToken } from "./store.ts";
 
@@ -23,15 +26,49 @@ const BRUSHES: [string, string][] = [
   ["P", "post"],
   ["G", "goal"],
   ["@", "spawn"],
-  ["c", "26up⌐"],
-  ["C", "26up¬"],
-  ["d", "26dn⌐"],
-  ["D", "26dn¬"],
-  ["u", "45up"],
-  ["n", "45dn"],
-  ["A", "63up"],
-  ["B", "63dn"],
+  ["c", "26 up, left half"],
+  ["C", "26 up, right half"],
+  ["d", "26 down, left half"],
+  ["D", "26 down, right half"],
+  ["u", "45 up"],
+  ["n", "45 down"],
+  ["A", "63 up"],
+  ["B", "63 down"],
 ];
+
+// What each brush draws as, taken from where render.ts and buildView already decide it,
+// so a button and the tile it paints cannot drift apart.
+const MARKER_GLYPH: Record<string, [string, string]> = {
+  "#": ["▓", PALETTE[11]],
+  "=": ["▒", PALETTE[22]],
+  "^": ["‸", PALETTE[15]],
+  o: ["⊙", PALETTE[17]],
+  P: ["★", PALETTE[16]],
+  G: ["⌂", PALETTE[21]],
+  "@": ["⭦", PALETTE[19]],
+};
+
+const brushGlyph = (ch: string): [string, string] | undefined => {
+  const m = MARKER_GLYPH[ch];
+  if (m) return m;
+  const i = SLOPE_CHARS.indexOf(ch);
+  return i >= 0 ? [SLOPE_GLYPH[i], PALETTE[11]] : undefined; // slopes are ground
+};
+
+// Cut the glyph out of the atlas the renderer already processed - white pixels with
+// luminance as alpha - and tint it with source-in. Same atlas, same tint, no second
+// decode and no second copy of the luminance trick.
+function chip(glyphs: GlyphSet, glyph: string, tint: string): string {
+  const tex = glyphs[glyph];
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = TILE;
+  const ctx = cv.getContext("2d")!;
+  ctx.drawImage(tex.source.resource as CanvasImageSource, tex.frame.x, tex.frame.y, TILE, TILE, 0, 0, TILE, TILE);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.fillStyle = tint;
+  ctx.fillRect(0, 0, TILE, TILE);
+  return cv.toDataURL();
+}
 
 export const ed = {
   on: false,
@@ -73,6 +110,7 @@ function blank(): string[] {
 
 export async function initEditor(opts: {
   canvas: HTMLCanvasElement;
+  glyphs: GlyphSet;
   scale: () => number;
   rows: () => string[];
   setLevel: (rows: string[]) => void;
@@ -90,7 +128,10 @@ export async function initEditor(opts: {
 
   for (const [ch, label] of BRUSHES) {
     const b = document.createElement("button");
-    b.textContent = label;
+    const g = brushGlyph(ch);
+    if (g) b.style.backgroundImage = `url(${chip(opts.glyphs, g[0], g[1])})`;
+    else b.classList.add("air");
+    b.title = label; // the name is a tooltip now, not a face full of text
     b.classList.toggle("on", ch === ed.brush);
     b.onclick = () => {
       ed.brush = ch;

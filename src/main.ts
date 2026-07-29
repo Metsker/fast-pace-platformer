@@ -79,6 +79,7 @@ const MARKERS = "@oPG";
 
 await initEditor({
   canvas: app.canvas,
+  glyphs,
   scale: () => zoom,
   rows: () => level.rows,
   setLevel,

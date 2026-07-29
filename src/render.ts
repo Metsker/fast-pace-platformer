@@ -5,7 +5,7 @@ import { K, ONEWAY, R, SLOPE0, SOLID, SPIKE, TILE, type Level, type Player, type
 import { follow, newCam, type Cam } from "./camera.ts";
 
 // Indexed by tile value - SLOPE0, so this must stay in sim.ts SLOPE_CHARS order.
-const SLOPE_GLYPH = ["🭊", "🬿", "🭈", "🭆", "🭑", "🬽", "🭋", "🭅", "🭀", "🭐"];
+export const SLOPE_GLYPH = ["🭊", "🬿", "🭈", "🭆", "🭑", "🬽", "🭋", "🭅", "🭀", "🭐"];
 
 export type View = {
   root: Container;
