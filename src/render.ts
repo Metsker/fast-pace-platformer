@@ -10,6 +10,11 @@ const SLOPE_GLYPH = ["🭊", "🬿", "🭈", "🭆", "🭑", "🬽", "🭋", "�
 export type View = {
   root: Container;
   world: Container;
+  tiles: Container;
+  // Indexed by ty * lv.w + tx, so the editor can replace one cell's sprite. Rebuilding
+  // the whole act instead measured 31ms - a 32fps drag, which is not a drag.
+  tileSprites: (Sprite | undefined)[];
+  glyphs: GlyphSet;
   head: Sprite;
   body: Sprite;
   ball: Sprite;
@@ -18,25 +23,45 @@ export type View = {
   cam: Cam;
 };
 
+function tileSprite(glyphs: GlyphSet, t: number): Sprite | undefined {
+  const glyph =
+    t === SOLID ? "▓" : t === ONEWAY ? "▒" : t === SPIKE ? "‸" : SLOPE_GLYPH[t - SLOPE0];
+  if (!glyph) return undefined;
+  const s = new Sprite(glyphs[glyph]);
+  // Slopes are ground and take the ground tint - terrain has to read as one surface.
+  s.tint = t === ONEWAY ? PALETTE[22] : t === SPIKE ? PALETTE[15] : PALETTE[11];
+  return s;
+}
+
+// Repaint one cell from lv.tiles. Only valid while lv.w is unchanged, which is why the
+// editor still re-parses when a paint lands past the level's own edge.
+export function setTile(v: View, lv: Level, tx: number, ty: number): void {
+  const i = ty * lv.w + tx;
+  v.tileSprites[i]?.destroy(); // destroy() unparents, so the container stays clean
+  const s = tileSprite(v.glyphs, lv.tiles[i]);
+  v.tileSprites[i] = s;
+  if (s) {
+    s.position.set(tx * TILE, ty * TILE);
+    v.tiles.addChild(s);
+  }
+}
+
 export function buildView(lv: Level, glyphs: GlyphSet): View {
   const root = new Container();
   const world = new Container();
   root.addChild(world);
 
-  // Built once and never re-flushed. Every glyph shares one atlas, so the whole level
-  // is essentially one draw call and the sprite count does not matter.
+  // Every glyph shares one atlas, so the whole level is essentially one draw call and
+  // the sprite count does not matter.
   const tiles = new Container();
+  const tileSprites: (Sprite | undefined)[] = new Array(lv.w * lv.h);
   for (let ty = 0; ty < lv.h; ty++) {
     for (let tx = 0; tx < lv.w; tx++) {
-      const t = lv.tiles[ty * lv.w + tx];
-      if (!t) continue;
-      const glyph =
-        t === SOLID ? "▓" : t === ONEWAY ? "▒" : t === SPIKE ? "‸" : SLOPE_GLYPH[t - SLOPE0];
-      if (!glyph) continue;
-      const s = new Sprite(glyphs[glyph]);
+      const i = ty * lv.w + tx;
+      const s = tileSprite(glyphs, lv.tiles[i]);
+      if (!s) continue;
       s.position.set(tx * TILE, ty * TILE);
-      // Slopes are ground and take the ground tint - terrain has to read as one surface.
-      s.tint = t === ONEWAY ? PALETTE[22] : t === SPIKE ? PALETTE[15] : PALETTE[11];
+      tileSprites[i] = s;
       tiles.addChild(s);
     }
   }
@@ -87,7 +112,7 @@ export function buildView(lv: Level, glyphs: GlyphSet): View {
   const body = actor("▲");
   const ball = actor("◉");
 
-  return { root, world, head, body, ball, rings, scatter, cam: newCam() };
+  return { root, world, tiles, tileSprites, glyphs, head, body, ball, rings, scatter, cam: newCam() };
 }
 
 export function syncView(

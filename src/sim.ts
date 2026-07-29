@@ -135,6 +135,17 @@ export type Input = { x: -1 | 0 | 1; down: boolean; jump: boolean; jumpDown: boo
 // *center* is not where a body stands, and a respawn there falls through the world.
 const standY = (ty: number) => ty * TILE + TILE - R.h;
 
+// The char -> tile mapping, factored out of parseLevel so the editor can repaint a
+// single cell without re-parsing the act. Markers (@ o P G) are not tiles and are not
+// here: they live in the parsed arrays, and changing one still costs a full re-parse.
+export function charToTile(ch: string): number {
+  if (ch === "#") return SOLID;
+  if (ch === "=") return ONEWAY;
+  if (ch === "^") return SPIKE;
+  const i = SLOPE_CHARS.indexOf(ch);
+  return i >= 0 ? SLOPE0 + i : EMPTY;
+}
+
 export function parseLevel(rows: string[]): Level {
   const w = Math.max(...rows.map((r) => r.length));
   const h = rows.length;
@@ -151,10 +162,7 @@ export function parseLevel(rows: string[]): Level {
       // body actually goes. They are not the same point and must not be conflated.
       else if (ch === "P") lv.checkpoints.push({ x: cx, y: cy, standY: standY(y), hit: false });
       else if (ch === "G") lv.goal = { x: cx, y: cy };
-      else if (ch === "#") tiles[y * w + x] = SOLID;
-      else if (ch === "=") tiles[y * w + x] = ONEWAY;
-      else if (ch === "^") tiles[y * w + x] = SPIKE;
-      else if (SLOPE_CHARS.includes(ch)) tiles[y * w + x] = SLOPE0 + SLOPE_CHARS.indexOf(ch);
+      else tiles[y * w + x] = charToTile(ch);
     }
   });
   return lv;

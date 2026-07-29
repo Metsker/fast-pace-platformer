@@ -54,6 +54,7 @@ export async function initEditor(opts: {
   scale: () => number;
   rows: () => string[];
   setLevel: (rows: string[]) => void;
+  painted: (tx: number, ty: number, ch: string, was: string) => void;
 }): Promise<void> {
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   const pick = $<HTMLSelectElement>("pick");
@@ -153,7 +154,7 @@ export async function initEditor(opts: {
     const row = rows[ty].padEnd(tx + 1, " ");
     if (row[tx] === ch) return;
     rows[ty] = row.slice(0, tx) + ch + row.slice(tx + 1);
-    ed.dirty = true;
+    opts.painted(tx, ty, ch, row[tx]);
   };
 
   opts.canvas.addEventListener("pointerdown", (e) => {

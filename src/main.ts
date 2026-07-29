@@ -5,6 +5,7 @@ import {
   K,
   STEP,
   TILE,
+  charToTile,
   newPlayer,
   parseLevel,
   restart,
@@ -14,7 +15,7 @@ import {
   type Player,
   type Ring,
 } from "./sim.ts";
-import { buildView, syncView, type View } from "./render.ts";
+import { buildView, setTile, syncView, type View } from "./render.ts";
 import { ed, initEditor } from "./editor.ts";
 
 // 20 x 14 tiles, the Genesis framing at 1 block per tile. Not 16:9 - pillarboxed, and
@@ -62,11 +63,24 @@ function resize() {
   view.root.scale.set(scale);
 }
 
+// Markers are not tiles - they live in the parsed arrays - and a paint past the level's
+// own edge changes its width, which invalidates every tile index. Both cost a re-parse.
+// Terrain within bounds does not, and terrain within bounds is what a drag paints.
+const MARKERS = "@oPG";
+
 await initEditor({
   canvas: app.canvas,
   scale: () => scale,
   rows: () => level.rows,
   setLevel,
+  painted: (tx, ty, ch, was) => {
+    if (MARKERS.includes(ch) || MARKERS.includes(was) || tx >= level.w || ty >= level.h) {
+      ed.dirty = true;
+      return;
+    }
+    level.tiles[ty * level.w + tx] = charToTile(ch);
+    setTile(view, level, tx, ty);
+  },
 });
 
 addEventListener("resize", resize);
