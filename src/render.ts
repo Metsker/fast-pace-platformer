@@ -18,6 +18,7 @@ export type View = {
   head: Sprite;
   body: Sprite;
   ball: Sprite;
+  spawn: Sprite;
   rings: Sprite[];
   scatter: Sprite[];
   cam: Cam;
@@ -80,6 +81,14 @@ export function buildView(lv: Level, glyphs: GlyphSet): View {
     s.tint = PALETTE[21];
     marks.addChild(s);
   }
+  // Spawn is authoring metadata rather than a game object, so main shows it only in edit
+  // mode. Anchored at the feet like the body is, which puts it in the `@` cell exactly -
+  // lv.spawn.y is a standing centre, not the cell centre, and the two are 5.5px apart.
+  const spawn = new Sprite(glyphs["⭦"]);
+  spawn.position.set(lv.spawn.x - TILE / 2, lv.spawn.y + R.h - TILE);
+  spawn.tint = PALETTE[19];
+  spawn.visible = false;
+  marks.addChild(spawn);
   world.addChild(marks);
 
   const ring = (): Sprite => {
@@ -112,7 +121,7 @@ export function buildView(lv: Level, glyphs: GlyphSet): View {
   const body = actor("▲");
   const ball = actor("◉");
 
-  return { root, world, tiles, tileSprites, glyphs, head, body, ball, rings, scatter, cam: newCam() };
+  return { root, world, tiles, tileSprites, glyphs, head, body, ball, spawn, rings, scatter, cam: newCam() };
 }
 
 export function syncView(

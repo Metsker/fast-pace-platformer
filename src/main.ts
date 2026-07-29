@@ -16,7 +16,7 @@ import {
   type Ring,
 } from "./sim.ts";
 import { buildView, setTile, syncView, type View } from "./render.ts";
-import { ed, initEditor } from "./editor.ts";
+import { ed, initEditor, showMenu } from "./editor.ts";
 
 // 20 x 14 tiles, the Genesis framing at 1 block per tile. Not 16:9 - pillarboxed, and
 // deliberately so: the reaction budget at the 480 px/s roll cap is what the level
@@ -52,15 +52,24 @@ function setLevel(rows: string[]): void {
   player = newPlayer(level);
   scattered.length = 0;
   view = buildView(level, glyphs);
-  view.root.scale.set(scale);
+  view.root.scale.set(zoom);
+  view.spawn.visible = ed.on; // authoring metadata, not something a player should see
   app.stage.addChildAt(view.root, 0); // behind the hud
 }
 
-let scale = 1;
+// `fit` is the integer scale that fits the 160x112 frame to the window. `zoom` is what
+// the world is actually drawn at, and it only leaves `fit` in edit mode - the framing is
+// a design constraint during play, not a preference.
+let fit = 1;
+let zoom = 1;
+const viewW = () => (VIEW_W * fit) / zoom;
+const viewH = () => (VIEW_H * fit) / zoom;
+
 function resize() {
-  scale = Math.max(1, Math.floor(Math.min(innerWidth / VIEW_W, innerHeight / VIEW_H)));
-  app.renderer.resize(VIEW_W * scale, VIEW_H * scale);
-  view.root.scale.set(scale);
+  fit = Math.max(1, Math.floor(Math.min(innerWidth / VIEW_W, innerHeight / VIEW_H)));
+  app.renderer.resize(VIEW_W * fit, VIEW_H * fit);
+  zoom = ed.on ? clamp(zoom, 1, fit * 2) : fit;
+  view.root.scale.set(zoom);
 }
 
 // Markers are not tiles - they live in the parsed arrays - and a paint past the level's
@@ -70,7 +79,7 @@ const MARKERS = "@oPG";
 
 await initEditor({
   canvas: app.canvas,
-  scale: () => scale,
+  scale: () => zoom,
   rows: () => level.rows,
   setLevel,
   painted: (tx, ty, ch, was) => {
@@ -104,7 +113,11 @@ addEventListener("keydown", (e) => {
   held.add(e.code);
   if (JUMP.includes(e.code)) input.jumpDown = true;
   if (e.code === "KeyR") restart(player, level, scattered);
-  if (e.code === "KeyE") toggleEdit();
+  if (e.code === "Escape") showMenu(!ed.menu);
+  if (e.code === "KeyE") {
+    showMenu(false); // editing is a way out of the list, not something behind it
+    toggleEdit();
+  }
   e.preventDefault();
 });
 addEventListener("keyup", (e) => held.delete(e.code));
@@ -115,10 +128,13 @@ function toggleEdit(): void {
   ed.on = !ed.on;
   document.getElementById("ed")!.classList.toggle("on", ed.on);
   hud.visible = !ed.on;
+  view.spawn.visible = ed.on;
   if (ed.on) {
     ed.camX = view.cam.x;
     ed.camY = view.cam.y;
   } else {
+    zoom = fit; // play always gets the designed framing back
+    view.root.scale.set(zoom);
     // Play from where you were looking rather than from spawn. The loop between an edit
     // and the jump it changes is the only thing an editor is for.
     player.x = player.px = ed.camX + VIEW_W / 2;
@@ -129,6 +145,33 @@ function toggleEdit(): void {
   }
 }
 
+// The wheel pans, the same axes wasd covers: shift for horizontal, and ctrl (which is
+// also what a trackpad pinch sends) to zoom about the cursor.
+app.canvas.addEventListener(
+  "wheel",
+  (e) => {
+    if (!ed.on) return;
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 16 : 1; // lines vs pixels
+    const dy = e.deltaY * k;
+    if (e.ctrlKey || e.metaKey) {
+      const next = clamp(zoom + (dy < 0 ? 1 : -1), 1, fit * 2);
+      if (next === zoom) return;
+      // Pin the world point under the cursor, or a zoom walks the level out from under it.
+      ed.camX += e.offsetX / zoom - e.offsetX / next;
+      ed.camY += e.offsetY / zoom - e.offsetY / next;
+      zoom = next;
+      view.root.scale.set(zoom);
+    } else if (e.shiftKey) {
+      ed.camX += dy / zoom;
+    } else {
+      ed.camX += (e.deltaX * k) / zoom;
+      ed.camY += dy / zoom;
+    }
+  },
+  { passive: false },
+);
+
 let acc = 0;
 app.ticker.add((t) => {
   const dt = t.deltaMS / 1000;
@@ -138,12 +181,14 @@ app.ticker.add((t) => {
     setLevel(level.rows);
   }
 
+  if (ed.menu) return; // the world holds where it is behind the list
+
   if (ed.on) {
     const d = PAN * dt * (held.has("ShiftLeft") ? 3 : 1);
     // The right bound runs two screens past the level's own width, so painting off the
     // end is how you extend an act - the next parse grows the bound to match.
-    ed.camX = clamp(ed.camX + ((any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0)) * d, 0, Math.max(0, level.w * TILE - VIEW_W) + VIEW_W * 2);
-    ed.camY = clamp(ed.camY + ((any(DOWN) ? 1 : 0) - (any(UP) ? 1 : 0)) * d, 0, Math.max(0, level.h * TILE - VIEW_H));
+    ed.camX = clamp(ed.camX + ((any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0)) * d, 0, Math.max(0, level.w * TILE - viewW()) + viewW() * 2);
+    ed.camY = clamp(ed.camY + ((any(DOWN) ? 1 : 0) - (any(UP) ? 1 : 0)) * d, 0, Math.max(0, level.h * TILE - viewH()));
     view.cam.x = ed.camX;
     view.cam.y = ed.camY;
     view.world.position.set(-ed.camX, -ed.camY);
@@ -162,7 +207,7 @@ app.ticker.add((t) => {
     input.jumpDown = false;
   }
 
-  syncView(view, player, level, scattered, acc / STEP, dt, VIEW_W, VIEW_H);
+  syncView(view, player, level, scattered, acc / STEP, dt, viewW(), viewH());
 
   const gsp = Math.abs(player.grounded ? player.gsp : player.vx);
   const mode = player.rolling

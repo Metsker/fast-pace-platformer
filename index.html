@@ -68,6 +68,49 @@
         min-height: 1.2em;
         overflow-wrap: anywhere;
       }
+      #menu {
+        position: fixed;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 14px;
+        background: #181e2af2;
+        color: #fff9e4;
+        font: 16px monospace;
+      }
+      #menu.on {
+        display: flex;
+      }
+      #menu h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 3px;
+        color: #ffb915;
+      }
+      #menu-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 55vh;
+        overflow-y: auto;
+      }
+      #menu-list button {
+        font: inherit;
+        color: inherit;
+        background: #2f2a4c;
+        border: 1px solid #546a00;
+        padding: 8px 28px;
+        cursor: pointer;
+      }
+      #menu-list button:hover {
+        background: #b53b59;
+      }
+      #menu-hint {
+        font-size: 12px;
+        color: #9666ee;
+      }
     </style>
   </head>
   <body>
@@ -85,6 +128,11 @@
       <input id="token" type="password" placeholder="github token (to save)" />
       <div id="status"></div>
       <div>e play · drag paint · right-click erase · wasd pan</div>
+    </div>
+    <div id="menu">
+      <h1>PICK AN ACT</h1>
+      <div id="menu-list"></div>
+      <div id="menu-hint">esc for this list · e to edit</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -29,6 +29,7 @@ const BRUSHES: [string, string][] = [
 
 export const ed = {
   on: false,
+  menu: false,
   name: "act-1",
   sha: undefined as string | undefined,
   brush: "#",
@@ -36,6 +37,21 @@ export const ed = {
   camX: 0,
   camY: 0,
 };
+
+// A level has one spawn and one goal, but the grid holds as many chars as you paint and
+// parseLevel keeps the last in scan order. So a second `@` painted above the first loses
+// to it silently - the paint lands in the rows, changes nothing, and reads as a marker
+// that will not draw. Painting one clears the others.
+const SINGLETON = "@G";
+
+function clearOthers(rows: string[], ch: string, keepX: number, keepY: number): void {
+  for (let y = 0; y < rows.length; y++) {
+    for (let i = rows[y].indexOf(ch); i >= 0; i = rows[y].indexOf(ch, i + 1)) {
+      if (y === keepY && i === keepX) continue;
+      rows[y] = rows[y].slice(0, i) + " " + rows[y].slice(i + 1); // same length, i stays valid
+    }
+  }
+}
 
 const NEW_W = 200;
 const NEW_H = 40;
@@ -97,14 +113,25 @@ export async function initEditor(opts: {
     }
   }
 
-  async function refresh(): Promise<void> {
+  async function refresh(): Promise<string[]> {
     try {
       const names = await list();
-      pick.replaceChildren(
-        ...names.map((n) => new Option(n, n, false, n === ed.name)),
+      pick.replaceChildren(...names.map((n) => new Option(n, n, false, n === ed.name)));
+      $("menu-list").replaceChildren(
+        ...names.map((n) => {
+          const b = document.createElement("button");
+          b.textContent = n;
+          b.onclick = () => {
+            open(n);
+            showMenu(false);
+          };
+          return b;
+        }),
       );
+      return names;
     } catch (e) {
       say(String((e as Error).message), true);
+      return [];
     }
   }
 
@@ -154,6 +181,7 @@ export async function initEditor(opts: {
     const row = rows[ty].padEnd(tx + 1, " ");
     if (row[tx] === ch) return;
     rows[ty] = row.slice(0, tx) + ch + row.slice(tx + 1);
+    if (SINGLETON.includes(ch)) clearOthers(rows, ch, tx, ty);
     opts.painted(tx, ty, ch, row[tx]);
   };
 
@@ -167,8 +195,23 @@ export async function initEditor(opts: {
   });
   opts.canvas.addEventListener("contextmenu", (e) => ed.on && e.preventDefault());
 
-  // The level in the URL is what a shared link carries, so a teammate's level is a link.
-  ed.name = new URLSearchParams(location.search).get("lvl") ?? ed.name;
+  // A level has to be up before the first frame, so the list is fetched first and the
+  // menu is laid over a level that is already loaded rather than over nothing.
+  relist = refresh;
+  const param = new URLSearchParams(location.search).get("lvl");
+  const names = await refresh();
+  ed.name = param ?? names[0] ?? ed.name;
   await open(ed.name);
-  refresh();
+  // A shared link names its level and goes straight in. Arriving without one is how you
+  // get the list.
+  if (!param) showMenu(true);
+}
+
+// Re-listed on every open, so a level a teammate added shows up without a reload.
+let relist = async (): Promise<unknown> => undefined;
+
+export function showMenu(on: boolean): void {
+  ed.menu = on;
+  document.getElementById("menu")!.classList.toggle("on", on);
+  if (on) relist();
 }
