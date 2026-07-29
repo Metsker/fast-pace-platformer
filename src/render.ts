@@ -2,18 +2,7 @@ import { Container, Sprite } from "pixi.js";
 import type { GlyphSet } from "./gfx/glyphs.ts";
 import { PALETTE } from "./tilemap.ts";
 import { K, ONEWAY, R, SLOPE0, SOLID, SPIKE, TILE, type Level, type Player, type Ring } from "./sim.ts";
-
-// Sonic 2's camera, plus the one thing Mania added.
-//
-// The scroll caps are not arbitrary: 180 px/s is exactly the running top speed and
-// 480 px/s is exactly the rolling cap, so the camera cannot fall behind by
-// construction. That relationship is why they are written as K.* and not as numbers.
-const DEAD_X = 4; // half of a 16 Genesis px horizontal window
-const AIR_Y = 8; // the player roams this far vertically before the camera follows
-const SLOW_AT = 240; // below this, grounded, the camera uses the slow cap
-const LEAD_GAIN = 0.1;
-const LEAD_MAX = 40; // a quarter of the view - at the roll cap this is the whole budget
-const LEAD_RATE = 3; // how fast the look-ahead itself slews, per second
+import { follow, newCam, type Cam } from "./camera.ts";
 
 // Indexed by tile value - SLOPE0, so this must stay in sim.ts SLOPE_CHARS order.
 const SLOPE_GLYPH = ["🭊", "🬿", "🭈", "🭆", "🭑", "🬽", "🭋", "🭅", "🭀", "🭐"];
@@ -26,12 +15,8 @@ export type View = {
   ball: Sprite;
   rings: Sprite[];
   scatter: Sprite[];
-  camX: number;
-  camY: number;
-  lead: number;
+  cam: Cam;
 };
-
-const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 export function buildView(lv: Level, glyphs: GlyphSet): View {
   const root = new Container();
@@ -102,7 +87,7 @@ export function buildView(lv: Level, glyphs: GlyphSet): View {
   const body = actor("▲");
   const ball = actor("◉");
 
-  return { root, world, head, body, ball, rings, scatter, camX: 0, camY: 0, lead: 0 };
+  return { root, world, head, body, ball, rings, scatter, cam: newCam() };
 }
 
 export function syncView(
@@ -141,27 +126,9 @@ export function syncView(
     if (r) s.position.set(r.x - TILE / 2, r.y - TILE / 2);
   }
 
-  // Look-ahead, the one deviation from Sonic 2. It slews rather than snapping, or
-  // turning around whips the whole world across the screen.
-  const want = clamp(p.vx * LEAD_GAIN, -LEAD_MAX, LEAD_MAX);
-  v.lead += (want - v.lead) * (1 - Math.pow(0.5, dt * LEAD_RATE));
-
-  const fast = !p.grounded || Math.abs(p.gsp) >= SLOW_AT;
-  const cap = (fast ? K.rollCap : K.topSpeed) * dt;
-
-  const dx = x - viewW / 2 + v.lead - v.camX;
-  if (Math.abs(dx) > DEAD_X) v.camX += Math.sign(dx) * Math.min(Math.abs(dx) - DEAD_X, cap);
-
-  // Grounded the player is pinned to the center line; airborne they roam a window, so
-  // a hop does not shake the frame but a real fall is followed.
-  const slack = p.grounded ? 0 : AIR_Y;
-  const dy = y - viewH / 2 - v.camY;
-  if (Math.abs(dy) > slack) v.camY += Math.sign(dy) * Math.min(Math.abs(dy) - slack, cap);
-
-  v.camX = clamp(v.camX, 0, Math.max(0, lv.w * TILE - viewW));
-  v.camY = clamp(v.camY, 0, Math.max(0, lv.h * TILE - viewH));
+  follow(v.cam, p, x, y, lv, viewW, viewH, dt);
 
   // The camera stays a float; roundPixels on the sprites keeps edges crisp without
   // juddering the whole world against the pixel grid.
-  v.world.position.set(-v.camX, -v.camY);
+  v.world.position.set(-v.cam.x, -v.cam.y);
 }

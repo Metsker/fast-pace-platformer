@@ -125,6 +125,9 @@ export type Player = {
   groundY: number; // last grounded center Y, for the camera
   respawnX: number;
   respawnY: number;
+  // Monotonic count of teleports. The camera cuts rather than scrolls when it changes,
+  // and it cannot be `deaths` because a restart resets that to zero.
+  warps: number;
   deaths: number;
   time: number;
   done: boolean;
@@ -187,6 +190,7 @@ export function newPlayer(lv: Level): Player {
     groundY: lv.spawn.y,
     respawnX: lv.spawn.x,
     respawnY: lv.spawn.y,
+    warps: 0,
     deaths: 0,
     time: 0,
     done: false,
@@ -283,6 +287,7 @@ export function hurt(p: Player, lv: Level, scattered: Ring[]): void {
 
 export function kill(p: Player, lv: Level): void {
   p.deaths++;
+  p.warps++;
   p.x = p.px = p.respawnX;
   p.y = p.py = p.respawnY;
   p.vx = p.vy = p.gsp = p.angle = 0;

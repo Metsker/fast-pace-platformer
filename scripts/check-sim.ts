@@ -9,6 +9,7 @@
 // wedges and no synthetic slope reproduces them.
 
 import { K, ONEWAY, R, STEP, TILE, kill, newPlayer, parseLevel, restart, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
+import { follow, newCam } from "../src/camera.ts";
 import { ACT_1 } from "../src/levels.ts";
 
 const DEG = Math.PI / 180;
@@ -303,6 +304,50 @@ function bot(p: Player, i: Input, lv: Level, bag: Ring[], roll = true): void {
   i.jump = i.jumpDown = hole;
   step(p, i, lv, bag);
   i.jumpDown = false;
+}
+
+// --- camera ----------------------------------------------------------------
+{
+  // A respawn teleports the body. If the camera scrolls to catch up instead of cutting,
+  // it walks back across the level at its capped rate - measured at 611px over 3.35
+  // seconds of the world sliding past, on every single death.
+  const lv = parseLevel(ACT_1);
+  const p = newPlayer(lv);
+  const bag: Ring[] = [];
+  const c = newCam();
+  const i = input({ x: 1 });
+  const frame = () => follow(c, p, p.x, p.y, lv, 160, 112, 1 / 60);
+  for (let k = 0; k < 120 * 8; k++) {
+    bot(p, i, lv, bag);
+    if (k % 2 === 0) frame();
+  }
+  const away = c.x;
+  ok("the camera keeps up while running", Math.abs(p.x - 80 - c.x) < 60, `${Math.abs(p.x - 80 - c.x).toFixed(0)}px behind at speed`);
+
+  kill(p, lv);
+  frame();
+  // Clamped, not centred: the spawn is 28px from the level's left edge, so the camera
+  // cannot put the player mid-screen and is right not to try.
+  const want = Math.min(Math.max(p.x - 80, 0), lv.w * TILE - 160);
+  const cut = Math.abs(c.x - want);
+  const at = c.x;
+  frame();
+  ok("a respawn cuts, never scrolls", cut < 0.5, `${(away - c.x).toFixed(0)}px in one frame, ${cut.toFixed(2)}px off target`);
+  ok("and does not keep drifting after", Math.abs(c.x - at) < 0.5, `${Math.abs(c.x - at).toFixed(2)}px on the next frame`);
+
+  // It still eases rather than snapping when nothing teleported. Run far enough that the
+  // left clamp is no longer holding it, or this measures nothing.
+  for (let k = 0; k < 120 * 4; k++) {
+    bot(p, i, lv, bag);
+    if (k % 2 === 0) frame();
+  }
+  const before = c.x;
+  for (let k = 0; k < 120; k++) {
+    bot(p, i, lv, bag);
+    if (k % 2 === 0) frame();
+  }
+  const moved = c.x - before;
+  ok("normal following still eases", moved > 0 && moved <= K.rollCap, `${moved.toFixed(0)}px over 1s, cap ${K.rollCap}`);
 }
 
 // --- respawn points --------------------------------------------------------
