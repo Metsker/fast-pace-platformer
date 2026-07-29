@@ -163,35 +163,53 @@ level's signage - a ring arc is the drawn trajectory of the jump the designer in
 Deferring badniks has one real cost: the low route is currently only *slower*, not more
 dangerous, so spike and pit placement has to carry the whole risk difference alone.
 
-## 7. The level is a chunk grid
+## 7. The level, and the size the speed budget dictates
 
-Sonic 2's own format. A library of 16x16-glyph chunks and a grid saying where each goes.
-15 x 3 chunks = 240 x 48 tiles: 12 screens across, 3.4 down.
+**594 x 96 tiles - 29.7 screens across, 6.9 down**, or 9,504 Genesis-equivalent px
+against a real act's ~10,000.
 
-```
-_____yTt___yTt_     band 0   rows  0-15   sky, upper shelf on its bottom rows
-SlNMJLK+NMJLqlZ     band 1   rows 16-31   the lower route, surface at row 22
-XXXXXXXXXXXXVXX     band 2   rows 32-47   rock, or void under a pit
-```
+The size is not a taste call. Reaching the 480 px/s rolling cap from a standing run takes
+473px of 26.6 degree surface, which is **53 tiles across and 32 rows down**:
 
-The whole two-tier structure lives in how the bands stack, which is what makes 12 screens
-of deliberate level fit in about 25 authored chunks instead of 37,500 characters.
+| Continuous descent | Speed at the bottom |
+|---|---|
+| 1 chunk (16 cols, 8 rows) | 304 px/s |
+| 2 chunks | 390 px/s |
+| 3 chunks | 461 px/s |
+| **4 chunks (64 cols, 32 rows)** | **480 px/s - the cap** |
 
-### The gate
+The first act was built of 1-chunk descents and measured a top speed of 300 px/s, which
+is that table's first row to within 4 px/s. It was not that the level was short; it was
+that no single grade was long enough to spend the speed budget on.
 
-The shelf sits 3 rows above the launch ramp's lip. Clearing that needs **24px of rise over
-56px of travel** off a 45 degree ramp, where `vy = -gsp * sin(45)`:
+### The chunk grid did not survive that
 
-| Arriving at | Rise over 56px | Takes the shelf |
-|---|---|---|
-| 180 (running flat out) | 17.7 px | no |
-| 240 (a spindash) | 34.6 px | yes |
-| 300 (rolled down the grade before it) | 42.3 px | yes |
+A full-speed descent drops 32 rows - twice the 16-row band height - so every one of them
+crosses two band seams, and each seam is an off-by-one that reads as an 8px wall. The act
+is now a walk left to right tracking the ground row, painting into one board, so the
+seams are correct by construction. 16 columns is still the composition unit and the
+painters are still per-chunk; what is gone is the fixed grid of 16x16 cells.
 
-Running as hard as you can is not enough, and that is the point: **the upper route is
-bought with rolling speed, not with holding right.** Failing it drops you back on the
-lower route 14 tiles past the lip - the punishment for missing the fast line is the slow
-line, never a death.
+Descents run 4 and 5 chunks, so the cap is held for the last stretch of each rather than
+merely touched at the bottom.
+
+### The gate, and what it does *not* gate
+
+The shelf sits 3 rows above the launch ramp's lip: **24px of rise over the 7 tiles to its
+start**, off a 45 degree ramp where `vy = -gsp * sin(45)`. At 180 px/s that buys 17.7px
+and fails; at 240 it buys 34.6px and clears.
+
+But that no longer means "only rolling gets up there", and the check that asserted so was
+wrong. **Above top speed, holding a direction gives no acceleration but also no
+friction** - so a runner on a long descent gains the slope's 100.6 px/s² with nothing
+taking it back, and arrives at the ramp near 300. Rolling is worth 2x that going down and
+half the cost coming up; it buys speed, not exclusive access. Which is what it buys in
+Sonic.
+
+Measured over the act: rolling is worth **2.5 seconds and 61 px/s of peak**, and only
+rolling reaches the cap - running peaks at 419. Failing a launch drops you back on the
+lower route past the lip, so the punishment for missing the fast line is the slow line,
+never a death.
 
 Each shelf skips a hazard: the first skips a spike patch, the second skips a pit. The fast
 line is also the safe one, and you only get it by arriving fast.
@@ -241,10 +259,17 @@ most within 1%; the residual is 120Hz discretisation.
 | roll cost on 26.6 up | -105.08 px/s2 | -105.08 |
 
 A full run of act 1 by a bot that holds right, rolls into every descent and jumps when the
-floor ahead stops: **goal reached in 14.2s, 80% grounded, 39% rolling, top ground speed
-300 px/s, 26 rings, no deaths, and it takes the upper shelf.**
+floor ahead stops: **goal reached in 18.1s, 72% grounded, 75% rolling, top ground speed
+578 px/s (72 tiles/s), horizontal pinned at the 480 cap, 19 rings, no deaths, 8% of the
+run on the upper route.**
 
-That bot is deliberately stupid - it never spindashes and never brakes. 39% rolling from
+The same bot with rolling disabled finishes in 20.6s and peaks at 419 px/s horizontal.
+
+Ground speed exceeding the cap is not a bug: the SPG caps `vx` only, and a steep grade
+carries a scalar the horizontal motion never spends. That is also why a rolling player
+can outrun the camera in the wall modes we have not built.
+
+That bot is deliberately stupid - it never spindashes and never brakes. 75% rolling from
 terrain alone is the number to watch: it says the grades are doing their job.
 
 An earlier version of it read 27.1s, and the difference was entirely the bot. Its
@@ -260,6 +285,9 @@ from the player measures a game nobody plays.**
    the shelf the lower route is just off the bottom edge. Authentic - Sonic's own view has
    the same limit - but it means the routes have to reconnect *visibly* to read as a
    choice, and right now they mostly reconnect off-screen.
+2. **Only 8% of the run is spent up there.** Two shelves over 30 screens, each about 45
+   tiles long. The upper route is currently a garnish on a mostly single-path act; making
+   it a real second line means more of them, and longer.
 2. **No badniks**, so the low route is slower but not more dangerous (§6).
 3. **No loops.** Emerald Hill without its icon (SONIC2.md §3 for the cost).
 4. **The bot never spindashes**, so the standing-start recovery verb is unexercised by the

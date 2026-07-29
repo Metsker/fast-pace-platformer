@@ -8,7 +8,7 @@
 // The second runs the real act, because the seams between chunks are where a body
 // wedges and no synthetic slope reproduces them.
 
-import { K, R, STEP, TILE, kill, newPlayer, parseLevel, restart, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
+import { K, ONEWAY, R, STEP, TILE, kill, newPlayer, parseLevel, restart, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
 import { ACT_1 } from "../src/levels.ts";
 
 const DEG = Math.PI / 180;
@@ -296,8 +296,8 @@ const floorAt = (lv: Level, x: number, y: number): boolean => {
   return lv.tiles[ty * lv.w + tx] !== 0;
 };
 
-function bot(p: Player, i: Input, lv: Level, bag: Ring[]): void {
-  i.down = p.grounded && p.angle < -0.1 && Math.abs(p.gsp) > 90;
+function bot(p: Player, i: Input, lv: Level, bag: Ring[], roll = true): void {
+  i.down = roll && p.grounded && p.angle < -0.1 && Math.abs(p.gsp) > 90;
   let hole = p.grounded && Math.abs(p.angle) <= 0.2;
   if (hole) for (let d = 0; d < 40 && hole; d += 4) hole = !floorAt(lv, p.x + 26, p.y + 11 + d);
   i.jump = i.jumpDown = hole;
@@ -355,14 +355,25 @@ console.log("\nact 1  (a bot holding right, rolling into descents, jumping holes
   const i = input({ x: 1 });
   let grounded = 0;
   let rolling = 0;
+  let onShelf = 0;
   let top = 0;
+  let topVX = 0;
   let high = Infinity;
   let n = 0;
+  // Standing on a one-way tile is the honest "took the upper route" signal now that the
+  // shelves sit at different heights along the act.
+  const shelfUnderfoot = () => {
+    const tx = Math.floor(p.x / TILE);
+    const ty = Math.floor((p.y + (p.rolling ? R.rollH : R.h) + 1) / TILE);
+    return p.grounded && tx >= 0 && tx < lv.w && ty >= 0 && ty < lv.h && lv.tiles[ty * lv.w + tx] === ONEWAY;
+  };
   for (; n < 120 * 200 && !p.done; n++) {
     bot(p, i, lv, bag);
     if (p.grounded) grounded++;
     if (p.rolling) rolling++;
+    if (shelfUnderfoot()) onShelf++;
     top = Math.max(top, Math.abs(p.gsp));
+    topVX = Math.max(topVX, Math.abs(p.vx));
     high = Math.min(high, p.y);
   }
   const secs = n * STEP;
@@ -371,11 +382,42 @@ console.log("\nact 1  (a bot holding right, rolling into descents, jumping holes
   console.log(`  rings              ${p.rings}`);
   console.log(`  grounded           ${((grounded / n) * 100).toFixed(0)}%`);
   console.log(`  rolling            ${((rolling / n) * 100).toFixed(0)}%`);
+  // Ground speed is not capped - only vx is, exactly as the SPG has it - so a steep
+  // grade carries a scalar the horizontal motion never spends.
   console.log(`  top ground speed   ${top.toFixed(0)} px/s   ${(top / TILE).toFixed(1)} tiles/s`);
-  console.log(`  highest reached    row ${(high / TILE).toFixed(1)}   (shelf is row 14)`);
-  console.log(`  took the shelf     ${high < 16 * TILE ? "yes" : "no"}`);
+  console.log(`  top horizontal     ${topVX.toFixed(0)} px/s   (cap ${K.rollCap})`);
+  console.log(`  on the upper route ${((onShelf / n) * 100).toFixed(0)}% of the run`);
+  console.log(`  highest reached    row ${(high / TILE).toFixed(1)}`);
   ok("act 1 is completable", p.done, `${secs.toFixed(1)}s`);
   ok("nothing wedges", secs < 190);
+  ok("the descents reach the rolling cap", topVX >= K.rollCap - 1, `${topVX.toFixed(0)} of ${K.rollCap} px/s`);
+  ok("rolling takes the upper route", onShelf > 0, `${((onShelf / n) * 100).toFixed(0)}% of the run on a shelf`);
+
+  // The gate, from the other side - and not the invariant I first wrote here, which was
+  // "running alone is refused the shelf". That is false, and the act proved it: above
+  // top speed, holding a direction gives no acceleration but also no friction, so a
+  // runner on a long descent gains the slope's 100.6 px/s2 with nothing taking it back
+  // and arrives at the ramp near 300, not 180. Rolling is worth 2x that on the way down
+  // and half the cost on the way up - it buys speed, not exclusive access, which is what
+  // it buys in Sonic too. What must stay true is that only rolling reaches the cap.
+  {
+    const lo = parseLevel(ACT_1);
+    const q = newPlayer(lo);
+    const sack: Ring[] = [];
+    const j = input({ x: 1 });
+    let peak = 0;
+    let k = 0;
+    for (; k < 120 * 200 && !q.done; k++) {
+      bot(q, j, lo, sack, false);
+      peak = Math.max(peak, Math.abs(q.vx));
+    }
+    const runSecs = k * STEP;
+    console.log(`\n  never rolling:     ${q.done ? "finished" : "DID NOT FINISH"} in ${runSecs.toFixed(1)}s, top horizontal ${peak.toFixed(0)} px/s`);
+    console.log(`  rolling is worth   ${(runSecs - secs).toFixed(1)}s and ${(topVX - peak).toFixed(0)} px/s`);
+    ok("only rolling reaches the cap", peak < K.rollCap - 20, `running peaks at ${peak.toFixed(0)}`);
+    ok("rolling is the faster line", secs < runSecs, `${secs.toFixed(1)}s vs ${runSecs.toFixed(1)}s`);
+    ok("running alone still finishes", q.done, `${runSecs.toFixed(1)}s`);
+  }
 
   // A cleared act has to be replayable. `step` early-returns on `done`, so anything
   // that resets the position without clearing it leaves a sim that is not ticking.

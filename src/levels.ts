@@ -1,154 +1,157 @@
-// Emerald Hill, roughly. Sonic 2's own level format: a library of fixed-size chunks
-// and a small grid saying where each one goes. 15 x 3 chunks of 16x16 glyphs is
-// 240 x 48 tiles - 12 screens across, 3.4 down.
+// Emerald Hill, roughly. 704 x 96 tiles - 35 screens across, 6.9 down.
 //
-// Three bands, and the whole two-tier structure lives in how they stack:
+// Composed in 16-column chunks, the same unit Sonic 2 uses, but painted into one board
+// with a surface array rather than stamped into a fixed grid of 16x16 cells. The grid
+// did not survive contact with the speed budget: reaching the 480 px/s rolling cap from
+// a standing run takes 473px of 26.6 degree surface, which is 53 tiles across and **32
+// rows down** - twice a band's height. Every full-speed descent would cross two band
+// seams, and each seam is an off-by-one that reads as an 8px wall.
 //
-//   band 0  rows  0-15   sky, with the upper route's shelf on its bottom two rows
-//   band 1  rows 16-31   the lower route. Its surface sits at row 22.
-//   band 2  rows 32-47   rock, or void where there is a pit
+// So the act is a walk left to right tracking the ground row, and the seams are correct
+// by construction. What the chunk grid was for - authoring 35 screens without typing
+// 60,000 characters - the painters below do instead.
 //
-// The shelf (row 14) sits 3 rows above the launch ramp's lip (row 17). That gap is the
-// gate: clearing it needs 24px of rise over 56px of travel, which running's 180 px/s
-// cannot buy and a spindash's 240 can. Failing it drops you back on the lower route -
-// the punishment for missing the fast line is the slow line, never a death.
+//   descent length   speed at the bottom
+//   1 chunk          304 px/s      <- what the old act had, and what it measured
+//   2 chunks         390 px/s
+//   3 chunks         461 px/s
+//   4 chunks         480 px/s      <- the rolling cap
+//
+// The act therefore runs its descents 4 and 5 chunks long, so the cap is not merely
+// touched at the bottom but held for the last stretch of each one.
 
-const W = 16;
-const H = 16;
+const CH = 16; // columns per chunk, the unit the act is composed in
+const W = 44 * CH;
+const H = 96;
+const CRUST = 10; // rows of rock under the surface. Deeper is invisible and not free.
 
-type Set = (x: number, y: number, ch: string) => void;
+const g = Array.from({ length: H }, () => new Array<string>(W).fill(" "));
+const surface: number[] = [];
 
-const chunk = (draw: (set: Set) => void): string[] => {
-  const g = Array.from({ length: H }, () => new Array<string>(W).fill(" "));
-  draw((x, y, ch) => {
-    if (y >= 0 && y < H && x >= 0 && x < W) g[y][x] = ch;
-  });
-  return g.map((r) => r.join(""));
+let col = 0;
+let row = 14;
+
+const put = (x: number, y: number, ch: string) => {
+  if (y >= 0 && y < H && x >= 0 && x < W) g[y][x] = ch;
 };
 
-const box = (set: Set, x0: number, y0: number, x1: number, y1: number, ch: string) => {
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, ch);
+// Ground records the column's surface row as well as drawing it, so the crust pass can
+// fill under every column without knowing which painter put it there.
+const ground = (x: number, y: number, ch: string) => {
+  put(x, y, ch);
+  surface[x] = y;
 };
 
-const GROUND = 6; // the lower route's surface, local to band 1
-const SHELF = 14; // the upper route's surface, local to band 0
-
-// A run of rings, spaced 2 apart - Sonic's rings are the drawn line of the route.
-const ringRow = (set: Set, x0: number, y: number, n: number) => {
-  for (let k = 0; k < n; k++) set(x0 + k * 2, y, "o");
+const flatCols = (n: number) => {
+  for (let k = 0; k < n; k++) ground(col++, row, "#");
 };
+const flat = (chunks: number) => flatCols(chunks * CH);
+const gap = (n: number) => (col += n);
 
-// --- band 1, the lower route -------------------------------------------------
-
-const flat = (extra?: (set: Set) => void) =>
-  chunk((set) => {
-    box(set, 0, GROUND, W - 1, H - 1, "#");
-    extra?.(set);
-  });
-
-// 26.6 degrees, the only grade you stay planted on. Two tiles per row of drop, so the
-// pair `dD` (or `cC` climbing) is one step. Rock is filled under every column.
-// A pair placed at row r carries the surface from (r+1)*8 on its left edge to r*8 on
-// its right, so a climb has to *start* one row above where a matching descent ended -
-// GROUND+7, not GROUND+8. An off-by-one here is an 8px step at the chunk seam, which
-// the push sensor reads as a wall and the run stops dead against it.
-const grade = (dir: 1 | -1) =>
-  chunk((set) => {
-    let row = dir > 0 ? GROUND : GROUND + 7;
-    for (let x = 0; x < W; x += 2) {
-      set(x, row, dir > 0 ? "d" : "c");
-      set(x + 1, row, dir > 0 ? "D" : "C");
-      box(set, x, row + 1, x + 1, H - 1, "#");
-      row += dir;
-    }
-  });
-
-// Flat, then a 45 degree ramp, then nothing. The lip is the launcher: leaving it sets
-// vy = -gsp * sin(45), so how high you get is exactly how fast you arrived.
-const ramp = chunk((set) => {
-  box(set, 0, GROUND, 7, H - 1, "#");
-  // Same seam rule: `u` carries its left edge at (row+1)*8, so the first one sits at
-  // GROUND-1 to meet the flat it leaves. Five columns puts the lip at row 1, three
-  // rows under the shelf - which is the 24px the gate is built around.
-  let row = GROUND - 1;
-  for (let x = 8; x <= 12; x++) {
-    set(x, row, "u");
-    box(set, x, row + 1, x, H - 1, "#");
-    row--;
+// 26.6 degrees, the only grade you stay planted on at speed. A pair carries the surface
+// from row*8 to (row+1)*8, so a descent from surface row S ends at S + 8 per chunk.
+const down = (chunks: number) => {
+  for (let k = 0; k < chunks * CH; k += 2) {
+    ground(col++, row, "d");
+    ground(col++, row, "D");
+    row++;
   }
-});
-
-// --- band 0, the upper route -------------------------------------------------
-
-// Whatever sits on a shelf has to fit *on* it. The first version placed rings and a star
-// post at fixed offsets, which put both past the end of the short shelf and left them
-// hanging in the air - so callers pass what they want and own the extent.
-const shelf = (x0: number, x1: number, extra?: (set: Set) => void) =>
-  chunk((set) => {
-    box(set, x0, SHELF, x1, SHELF + 1, "=");
-    extra?.(set);
-  });
-
-const CHUNKS: Record<string, string[]> = {
-  _: chunk(() => {}),
-  X: chunk((set) => box(set, 0, 0, W - 1, H - 1, "#")),
-  V: chunk(() => {}),
-
-  // lower route
-  S: flat((set) => {
-    set(3, GROUND - 1, "@");
-    ringRow(set, 8, GROUND - 1, 4);
-  }),
-  L: flat(),
-  l: flat((set) => ringRow(set, 2, GROUND - 1, 6)),
-  K: flat((set) => box(set, 6, GROUND - 1, 9, GROUND - 1, "^")),
-  N: grade(1),
-  M: grade(-1),
-  J: ramp,
-  q: chunk((set) => {
-    box(set, 0, GROUND, 4, H - 1, "#");
-    box(set, 11, GROUND, W - 1, H - 1, "#");
-  }),
-  // Where the first shelf drops you back down, so both routes pass the checkpoint.
-  "+": flat((set) => {
-    ringRow(set, 2, GROUND - 1, 4);
-    set(12, GROUND - 1, "P");
-  }),
-  Z: flat((set) => set(8, GROUND - 1, "G")),
-
-  // upper route. The star post has to be up here too: the shelf ends above the lower
-  // route's checkpoint and drops you *past* it through the air, 66px over its head, so
-  // one checkpoint on the ground is one the fast line never touches.
-  y: shelf(4, W - 1),
-  T: shelf(0, W - 1, (set) => {
-    ringRow(set, 2, SHELF - 1, 6);
-    set(14, SHELF - 1, "P");
-  }),
-  t: shelf(0, 9, (set) => ringRow(set, 2, SHELF - 1, 4)),
 };
 
-// Each row is one band; each character is one chunk. Read it as a map.
-//
-// The shelf over chunks 5-7 skips the spike patch at 6; the shelf over 11-13 skips the
-// pit at 12. That is the deal the two tiers make - the fast line is also the safe one,
-// and you only get it by arriving at a ramp with rolling speed.
-const ACT = [
-  "_____yTt___yTt_",
-  "SlNMJLK+NMJLqlZ",
-  "XXXXXXXXXXXXVXX",
-];
-
-function assemble(grid: string[]): string[] {
-  const rows: string[] = [];
-  for (const band of grid) {
-    const cells = [...band].map((c) => {
-      const ch = CHUNKS[c];
-      if (!ch) throw new Error(`no chunk '${c}'`);
-      return ch;
-    });
-    for (let y = 0; y < H; y++) rows.push(cells.map((c) => c[y]).join(""));
+// And a climb has to start one row above where a matching descent ended: `c` carries its
+// left edge at (r+1)*8, not r*8. This is the off-by-one that reads as a wall.
+const up = (chunks: number) => {
+  let r = row - 1;
+  for (let k = 0; k < chunks * CH; k += 2) {
+    ground(col++, r, "c");
+    ground(col++, r, "C");
+    r--;
   }
-  return rows;
+  row = r + 1;
+};
+
+// A 45 degree kicker, then open air. Leaving the lip sets vy = -gsp * sin(45), so how
+// high you get is exactly how fast you arrived. `row` is left alone: whatever follows
+// the gap resumes at the level the ramp started from, which is what makes a failed
+// launch a demotion rather than a death.
+const ramp = (cols: number, over: number) => {
+  let r = row - 1;
+  for (let k = 0; k < cols; k++) ground(col++, r--, "u");
+  const lip = { row: r + 1, col };
+  gap(over);
+  return lip;
+};
+
+const rings = (x: number, y: number, n: number, step = 2) => {
+  for (let k = 0; k < n; k++) put(x + k * step, y, "o");
+};
+
+// A one-way platform: passable from below, so a launch that overshoots still lands on it.
+const shelf = (x: number, len: number, y: number) => {
+  for (let k = 0; k < len; k++) {
+    put(x + k, y, "=");
+    put(x + k, y + 1, "=");
+  }
+};
+
+const spikes = (x: number, n: number, y: number) => {
+  for (let k = 0; k < n; k++) put(x + k, y, "^");
+};
+
+// The shelf sits 3 rows over the lip: 24px of rise across the 7 tiles to its start,
+// which 180 px/s of running cannot buy and 240 of spindash can.
+const GATE = 3;
+const REACH = 7;
+
+// --- act 1 ------------------------------------------------------------------
+
+flat(3);
+put(3, row - 1, "@");
+rings(10, row - 1, 6);
+
+down(5); // 14 -> 54, and the cap is reached about four fifths of the way down
+flat(1);
+rings(col - 26, row - 1, 8);
+up(3); // 54 -> 30
+
+const lip1 = ramp(5, 3);
+const shelfTop1 = lip1.row - GATE;
+flat(4);
+spikes(lip1.col + 30, 5, row - 1); // the hazard the upper route buys you past
+shelf(lip1.col + REACH, 46, shelfTop1);
+rings(lip1.col + REACH + 6, shelfTop1 - 1, 8);
+put(lip1.col + REACH + 40, shelfTop1 - 1, "P");
+put(lip1.col + 12, row - 1, "P"); // and a star post on the low road too
+
+down(5); // 30 -> 70
+flat(1);
+rings(col - 24, row - 1, 6);
+up(3); // 70 -> 46
+
+const lip2 = ramp(5, 3);
+const shelfTop2 = lip2.row - GATE;
+flatCols(28);
+gap(10); // the pit the second shelf buys you past
+flatCols(26);
+shelf(lip2.col + REACH, 44, shelfTop2);
+rings(lip2.col + REACH + 6, shelfTop2 - 1, 8);
+put(lip2.col + REACH + 38, shelfTop2 - 1, "P");
+
+down(4); // 46 -> 78
+flat(2);
+rings(col - 28, row - 1, 6);
+put(col - 6, row - 1, "G");
+flatCols(CH);
+
+// --- crust ------------------------------------------------------------------
+// Each column fills to its neighbours' depth as well as its own, which is what makes a
+// ramp lip and a pit edge read as a face rather than a floating lip.
+for (let x = 0; x < W; x++) {
+  const s = surface[x];
+  if (s === undefined) continue;
+  const deep = Math.max(s, surface[x - 1] ?? s, surface[x + 1] ?? s);
+  for (let y = s + 1; y <= Math.min(H - 1, deep + CRUST); y++) put(x, y, "#");
 }
 
-export const ACT_1 = assemble(ACT);
+const end = surface.length + 2;
+export const ACT_1 = g.map((r) => r.slice(0, end).join(""));
