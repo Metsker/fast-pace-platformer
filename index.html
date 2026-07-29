@@ -22,10 +22,70 @@
         display: block;
         image-rendering: pixelated;
       }
+      #ed {
+        position: fixed;
+        top: 0;
+        left: 0;
+        display: none;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        max-width: 260px;
+        background: #181e2ae8;
+        color: #fff9e4;
+        font: 12px monospace;
+      }
+      #ed.on {
+        display: flex;
+      }
+      #ed input,
+      #ed select,
+      #ed button {
+        font: inherit;
+        color: inherit;
+        background: #2f2a4c;
+        border: 1px solid #546a00;
+        padding: 3px 5px;
+      }
+      #ed .row {
+        display: flex;
+        gap: 4px;
+      }
+      #ed .row > * {
+        flex: 1;
+        min-width: 0;
+      }
+      #pal {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 3px;
+      }
+      #pal button.on {
+        background: #b53b59;
+      }
+      #status {
+        color: #ffb915;
+        min-height: 1.2em;
+        overflow-wrap: anywhere;
+      }
     </style>
   </head>
   <body>
     <div id="stage"></div>
+    <div id="ed">
+      <div class="row">
+        <select id="pick"></select>
+        <button id="new">new</button>
+      </div>
+      <div id="pal"></div>
+      <div class="row">
+        <button id="save">save</button>
+        <button id="reload">reload</button>
+      </div>
+      <input id="token" type="password" placeholder="github token (to save)" />
+      <div id="status"></div>
+      <div>e play · drag paint · right-click erase · wasd pan</div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

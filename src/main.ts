@@ -1,9 +1,21 @@
 import { Application, Text } from "pixi.js";
 import { loadGlyphs } from "./gfx/glyphs.ts";
 import { PALETTE } from "./tilemap.ts";
-import { K, STEP, TILE, newPlayer, parseLevel, restart, step, type Input, type Ring } from "./sim.ts";
-import { ACT_1 } from "./levels.ts";
-import { buildView, syncView } from "./render.ts";
+import {
+  K,
+  STEP,
+  TILE,
+  newPlayer,
+  parseLevel,
+  restart,
+  step,
+  type Input,
+  type Level,
+  type Player,
+  type Ring,
+} from "./sim.ts";
+import { buildView, syncView, type View } from "./render.ts";
+import { ed, initEditor } from "./editor.ts";
 
 // 20 x 14 tiles, the Genesis framing at 1 block per tile. Not 16:9 - pillarboxed, and
 // deliberately so: the reaction budget at the 480 px/s roll cap is what the level
@@ -11,8 +23,6 @@ import { buildView, syncView } from "./render.ts";
 const VIEW_W = 160;
 const VIEW_H = 112;
 
-const level = parseLevel(ACT_1);
-const player = newPlayer(level);
 const scattered: Ring[] = [];
 const input: Input = { x: 0, down: false, jump: false, jumpDown: false };
 
@@ -21,8 +31,6 @@ await app.init({ background: PALETTE[2], antialias: false });
 document.getElementById("stage")!.appendChild(app.canvas);
 
 const glyphs = await loadGlyphs("./dungeon-mode.png");
-const view = buildView(level, glyphs);
-app.stage.addChild(view.root);
 
 const hud = new Text({
   text: "",
@@ -31,25 +39,103 @@ const hud = new Text({
 hud.position.set(6, 4);
 app.stage.addChild(hud);
 
+let level: Level;
+let player: Player;
+let view: View;
+
+// The whole cost of an edit: re-parse the rows, rebuild the view. 6.7k sprites for act 1,
+// so this is cheap enough to do on a dirty flag once per frame rather than diffing tiles.
+function setLevel(rows: string[]): void {
+  view?.root.destroy({ children: true });
+  level = parseLevel(rows);
+  player = newPlayer(level);
+  scattered.length = 0;
+  view = buildView(level, glyphs);
+  view.root.scale.set(scale);
+  app.stage.addChildAt(view.root, 0); // behind the hud
+}
+
+let scale = 1;
+function resize() {
+  scale = Math.max(1, Math.floor(Math.min(innerWidth / VIEW_W, innerHeight / VIEW_H)));
+  app.renderer.resize(VIEW_W * scale, VIEW_H * scale);
+  view.root.scale.set(scale);
+}
+
+await initEditor({
+  canvas: app.canvas,
+  scale: () => scale,
+  rows: () => level.rows,
+  setLevel,
+});
+
+addEventListener("resize", resize);
+resize();
+
 const LEFT = ["ArrowLeft", "KeyA"];
 const RIGHT = ["ArrowRight", "KeyD"];
+const UP = ["ArrowUp", "KeyW"];
 const DOWN = ["ArrowDown", "KeyS"];
 const JUMP = ["Space", "KeyZ", "ArrowUp", "KeyW"];
 
+const PAN = 480; // px/s, the roll cap - fast enough to cross the act without waiting
+
 const held = new Set<string>();
 addEventListener("keydown", (e) => {
+  // The editor panel's own fields keep their keystrokes, and a button that still has
+  // focus after a click must not eat space as a jump.
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.target instanceof HTMLButtonElement) e.target.blur();
   if (e.repeat) return;
   held.add(e.code);
   if (JUMP.includes(e.code)) input.jumpDown = true;
   if (e.code === "KeyR") restart(player, level, scattered);
+  if (e.code === "KeyE") toggleEdit();
   e.preventDefault();
 });
 addEventListener("keyup", (e) => held.delete(e.code));
 
 const any = (codes: string[]) => codes.some((c) => held.has(c));
 
+function toggleEdit(): void {
+  ed.on = !ed.on;
+  document.getElementById("ed")!.classList.toggle("on", ed.on);
+  hud.visible = !ed.on;
+  if (ed.on) {
+    ed.camX = view.cam.x;
+    ed.camY = view.cam.y;
+  } else {
+    // Play from where you were looking rather than from spawn. The loop between an edit
+    // and the jump it changes is the only thing an editor is for.
+    player.x = player.px = ed.camX + VIEW_W / 2;
+    player.y = player.py = ed.camY + VIEW_H / 2;
+    player.vx = player.vy = player.gsp = 0;
+    player.grounded = false;
+    player.warps++; // a teleport, so the camera cuts instead of scrolling across the act
+  }
+}
+
 let acc = 0;
 app.ticker.add((t) => {
+  const dt = t.deltaMS / 1000;
+
+  if (ed.dirty) {
+    ed.dirty = false;
+    setLevel(level.rows);
+  }
+
+  if (ed.on) {
+    const d = PAN * dt * (held.has("ShiftLeft") ? 3 : 1);
+    // The right bound runs two screens past the level's own width, so painting off the
+    // end is how you extend an act - the next parse grows the bound to match.
+    ed.camX = clamp(ed.camX + ((any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0)) * d, 0, Math.max(0, level.w * TILE - VIEW_W) + VIEW_W * 2);
+    ed.camY = clamp(ed.camY + ((any(DOWN) ? 1 : 0) - (any(UP) ? 1 : 0)) * d, 0, Math.max(0, level.h * TILE - VIEW_H));
+    view.cam.x = ed.camX;
+    view.cam.y = ed.camY;
+    view.world.position.set(-ed.camX, -ed.camY);
+    return;
+  }
+
   input.x = ((any(RIGHT) ? 1 : 0) - (any(LEFT) ? 1 : 0)) as -1 | 0 | 1;
   input.down = any(DOWN);
   input.jump = any(JUMP);
@@ -62,7 +148,7 @@ app.ticker.add((t) => {
     input.jumpDown = false;
   }
 
-  syncView(view, player, level, scattered, acc / STEP, t.deltaMS / 1000, VIEW_W, VIEW_H);
+  syncView(view, player, level, scattered, acc / STEP, dt, VIEW_W, VIEW_H);
 
   const gsp = Math.abs(player.grounded ? player.gsp : player.vx);
   const mode = player.rolling
@@ -79,16 +165,12 @@ app.ticker.add((t) => {
     `RINGS ${String(player.rings).padStart(3)}    TIME ${mins}:${String(Math.floor(player.time % 60)).padStart(2, "0")}` +
     `\n${gsp.toFixed(0).padStart(3)} px/s  ${(gsp / TILE).toFixed(1)} tiles/s   ${mode}` +
     (gsp > K.topSpeed ? `   +${(gsp - K.topSpeed).toFixed(0)} over running` : "") +
-    (player.done ? "\nACT CLEAR" : "\narrows move  ·  down roll  ·  space jump  ·  r restart");
+    (player.done ? "\nACT CLEAR" : "\narrows move · down roll · space jump · r restart · e edit");
 });
 
-function resize() {
-  const s = Math.max(1, Math.floor(Math.min(innerWidth / VIEW_W, innerHeight / VIEW_H)));
-  app.renderer.resize(VIEW_W * s, VIEW_H * s);
-  view.root.scale.set(s);
+function clamp(v: number, lo: number, hi: number) {
+  return v < lo ? lo : v > hi ? hi : v;
 }
-addEventListener("resize", resize);
-resize();
 
 // Exposed so Playwright can inspect the live scene graph and sim state.
-Object.assign(window, { app, sim: { player, level, view, scattered } });
+Object.assign(window, { app, ed, sim: { get player() { return player; }, get level() { return level; }, get view() { return view; }, scattered } });
