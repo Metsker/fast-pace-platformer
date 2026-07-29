@@ -40,10 +40,6 @@ export const K = {
   slipAngle: 46 * DEG,
   ctrlLock: 0.5,
 
-  spinDrag: 8, // spinRev -= floor(spinRev*8)/256 per frame
-  spinBase: 240, // release = 240 + floor(spinRev)/2 * 30
-  spinStep: 30,
-
   invuln: 64 / 60,
   hurtVX: 60,
   hurtVY: -120,
@@ -115,8 +111,6 @@ export type Player = {
   rolling: boolean;
   jumped: boolean; // this rise came from the jump button, so the height cut applies
   rollJump: boolean; // jumped out of a roll - no air control, Sonic 1/2 rules
-  spinning: boolean;
-  spinRev: number;
   ctrlLock: number;
   facing: 1 | -1;
   rings: number;
@@ -180,8 +174,6 @@ export function newPlayer(lv: Level): Player {
     rolling: false,
     jumped: false,
     rollJump: false,
-    spinning: false,
-    spinRev: 0,
     ctrlLock: 0,
     facing: 1,
     rings: 0,
@@ -291,8 +283,8 @@ export function kill(p: Player, lv: Level): void {
   p.x = p.px = p.respawnX;
   p.y = p.py = p.respawnY;
   p.vx = p.vy = p.gsp = p.angle = 0;
-  p.grounded = p.rolling = p.jumped = p.rollJump = p.spinning = false;
-  p.spinRev = p.ctrlLock = p.invuln = p.regrab = 0;
+  p.grounded = p.rolling = p.jumped = p.rollJump = false;
+  p.ctrlLock = p.invuln = p.regrab = 0;
   p.rings = 0;
   p.groundY = p.y;
   for (const r of lv.rings) r.taken = false;
@@ -405,26 +397,7 @@ function advance(p: Player, lv: Level, dx: number, dy: number, down: boolean): v
 }
 
 function groundStep(p: Player, i: Input, xin: number): void {
-  if (p.spinning) {
-    // Charging bleeds away, so mashing faster is genuinely better than mashing longer.
-    p.spinRev -= (Math.floor(p.spinRev * K.spinDrag) / 256) * (STEP * 60);
-    if (p.spinRev < 0) p.spinRev = 0;
-    if (i.jumpDown) p.spinRev = Math.min(8, p.spinRev + 2);
-    if (!i.down) {
-      p.gsp = p.facing * (K.spinBase + (Math.floor(p.spinRev) / 2) * K.spinStep);
-      p.spinning = false;
-      ball(p, true);
-    }
-    return;
-  }
-
   if (i.jumpDown) {
-    if (i.down && Math.abs(p.gsp) < K.rollMin) {
-      ball(p, false);
-      p.spinning = true;
-      p.spinRev = 2;
-      return;
-    }
     // Jumping is the inverse of the ground projection and respects the angle, so leaving
     // a ramp carries the climb into the air with no special case for it.
     p.vx = p.gsp * Math.cos(p.angle) - K.jumpForce * Math.sin(p.angle);
@@ -450,9 +423,6 @@ function groundStep(p: Player, i: Input, xin: number): void {
   // over the roll threshold, enter the ball, roll friction drops you under it again,
   // and the body flips height by 2.5px every step or two - measured 145 flips in two
   // seconds of holding down and a direction, which is what read as jarring.
-  //
-  // It is also what makes the spindash reachable: the crouch settles at a standstill,
-  // so down+jump finds `gsp` under the threshold instead of racing past it.
   const move = i.down && !p.rolling ? 0 : xin;
 
   const acc = p.rolling ? 0 : K.accel;

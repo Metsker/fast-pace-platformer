@@ -85,7 +85,6 @@ per-second = per-frame x 60. `npm run check` asserts every one of them.
 | roll friction / deceleration | 42.19 / 225 px/s2 |
 | slope factor: run / roll up / roll down | 225 / 140.6 / 562.5 px/s2 |
 | slip: angle, speed, control lock | 46 deg, 75 px/s, 0.5 s |
-| spindash release | 240..360 px/s |
 | body, standing / rolling | 9 x 19 / 7 x 15 px |
 | view | 160 x 112 px, integer scale |
 | camera scroll cap, slow / fast | 180 / 480 px/s |
@@ -96,25 +95,31 @@ rolling cap, so the camera cannot fall behind by construction. They are written 
 
 ## 4. The verb set
 
-**run, jump (variable height), roll, spindash.** Nothing else.
+**run, jump (variable height), roll.** Nothing else.
 
 No air jump, no wall-jump, no dive, no dash, no breakable platforms. Every one of them
 hands you speed or height the terrain did not give you, which is the thing this clone
 exists to stop doing. Wall-jump in particular contradicts the slip rule (§5), whose
 entire job is to stop you climbing walls.
 
+**No spindash either.** That is Sonic 1's verb set, and it is a real cost worth naming:
+the spindash was the only standing-start recovery, so anything that stops you now costs
+the full 2.13-second acceleration curve. RESEARCH.md §3 lists standing-start recovery as
+something every good momentum game has an answer to, and this build's answer is now "do
+not stop". The terrain mostly obliges - every descent restarts you - but a slip back down
+a 63 degree face has no fast way out.
+
 Ball form covers rolling *and* jumping - in Sonic they are the same smaller body, which
 is why a jump clears gaps a run cannot. Entering it sinks the center 2.5px so the feet
 stay put.
 
-**Crouching is a fifth state, and it is load-bearing rather than flavour.** Holding down
+**Crouching is a fourth state, and it is load-bearing rather than flavour.** Holding down
 while too slow to roll ignores left/right entirely. Without that suppression you
 accelerate back over the 15 px/s roll threshold, enter the ball, roll friction drops you
 under it again, and the body flips height 2.5px at a time - measured **145 flips in two
-seconds** of holding down and a direction. It also makes the spindash reachable at all:
-the crouch settles at a standstill, so down+jump finds `gsp` under the threshold instead
-of racing past it. Building speed from a standstill is the spindash's whole job, and
-before this it could not be entered while holding the direction you wanted to leave in.
+seconds** of holding down and a direction. With the spindash gone the crouch does nothing
+else, which makes it look like dead content; it is not. It is the only thing keeping the
+roll threshold from oscillating.
 
 **Dying is not restarting.** `kill` puts you back at the last checkpoint and leaves the
 run intact, including `done` - which `step` early-returns on, so calling it on a cleared
@@ -269,7 +274,7 @@ Ground speed exceeding the cap is not a bug: the SPG caps `vx` only, and a steep
 carries a scalar the horizontal motion never spends. That is also why a rolling player
 can outrun the camera in the wall modes we have not built.
 
-That bot is deliberately stupid - it never spindashes and never brakes. 75% rolling from
+That bot is deliberately stupid - it never brakes and never backs up. 75% rolling from
 terrain alone is the number to watch: it says the grades are doing their job.
 
 An earlier version of it read 27.1s, and the difference was entirely the bot. Its
@@ -290,8 +295,10 @@ from the player measures a game nobody plays.**
    it a real second line means more of them, and longer.
 2. **No badniks**, so the low route is slower but not more dangerous (§6).
 3. **No loops.** Emerald Hill without its icon (SONIC2.md §3 for the cost).
-4. **The bot never spindashes**, so the standing-start recovery verb is unexercised by the
-   check. The only thing proving it works is a browser input test.
+4. **Nothing recovers a standing start.** With the spindash gone, anything that stops you
+   costs 2.13 seconds of acceleration curve. The terrain hides it - every descent restarts
+   you - but a slip back down a 63 degree face has no fast way out, and RESEARCH.md §3
+   lists Mania's drop dash as the five-line fix if this ever bites.
 5. **One act, no boss, no act 2, no zone structure.** The chunk grid is built to extend;
    nothing else is.
 6. **The deceleration quirk is not implemented** - the SPG sets `gsp` to +/-0.5 px/f on a

@@ -99,7 +99,7 @@ const spikes = (x: number, n: number, y: number) => {
 };
 
 // The shelf sits 3 rows over the lip: 24px of rise across the 7 tiles to its start,
-// which 180 px/s of running cannot buy and 240 of spindash can.
+// which 180 px/s cannot buy and 240 can - so it is bought on the descent before it.
 const GATE = 3;
 const REACH = 7;
 

@@ -65,21 +65,21 @@ app.ticker.add((t) => {
   syncView(view, player, level, scattered, acc / STEP, t.deltaMS / 1000, VIEW_W, VIEW_H);
 
   const gsp = Math.abs(player.grounded ? player.gsp : player.vx);
-  const mode = player.spinning
-    ? `SPINDASH ${player.spinRev.toFixed(1)}`
-    : player.rolling
-      ? player.grounded
-        ? "rolling"
-        : "ball"
-      : player.grounded
-        ? "running"
-        : "air";
+  const mode = player.rolling
+    ? player.grounded
+      ? "rolling"
+      : "ball"
+    : player.grounded
+      ? input.down
+        ? "crouching"
+        : "running"
+      : "air";
   const mins = Math.floor(player.time / 60);
   hud.text =
     `RINGS ${String(player.rings).padStart(3)}    TIME ${mins}:${String(Math.floor(player.time % 60)).padStart(2, "0")}` +
     `\n${gsp.toFixed(0).padStart(3)} px/s  ${(gsp / TILE).toFixed(1)} tiles/s   ${mode}` +
     (gsp > K.topSpeed ? `   +${(gsp - K.topSpeed).toFixed(0)} over running` : "") +
-    (player.done ? "\nACT CLEAR" : "\narrows move  ·  down+space spindash  ·  down roll  ·  space jump  ·  r restart");
+    (player.done ? "\nACT CLEAR" : "\narrows move  ·  down roll  ·  space jump  ·  r restart");
 });
 
 function resize() {

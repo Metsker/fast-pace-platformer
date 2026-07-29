@@ -228,8 +228,7 @@ near("roll cost on 26.6 up, px/s2", rollAccel(-1, 320), -(K.slopeRollUp * Math.s
   // Holding down while too slow to roll has to settle. If left/right still accelerates
   // you, you cross the roll threshold, roll friction drops you back under it, and the
   // body flips height 2.5px at a time - 145 times in two seconds, which is what the
-  // player felt. The spindash also becomes unreachable, because gsp is never under the
-  // threshold on the frame you press jump.
+  // player felt.
   const lv = parseLevel(field());
   const p = newPlayer(lv);
   const bag: Ring[] = [];
@@ -249,40 +248,31 @@ near("roll cost on 26.6 up, px/s2", rollAccel(-1, 320), -(K.slopeRollUp * Math.s
   ok("crouching holds you still", Math.abs(p.gsp) < 1, `${p.gsp.toFixed(2)} px/s`);
 }
 {
-  // And the payoff: you can still build speed from a standstill, holding a direction.
+  // A crouch must not be a trap: releasing down has to hand the controls straight back.
+  // With no spindash there is no other way out of it.
   const lv = parseLevel(field());
   const p = newPlayer(lv);
   const bag: Ring[] = [];
   for (let k = 0; k < 20; k++) step(p, NO, lv, bag);
-  const charge = input({ x: 1, down: true, jump: true, jumpDown: true });
-  for (let k = 0; k < 60; k++) {
-    step(p, charge, lv, bag);
-    charge.jumpDown = k % 6 === 4;
-  }
-  const revved = p.spinning;
-  step(p, input({ x: 1 }), lv, bag);
-  ok("can spindash while holding a direction", revved && p.gsp > K.topSpeed, `${p.gsp.toFixed(0)} px/s`);
+  for (let k = 0; k < 240; k++) step(p, input({ x: 1, down: true }), lv, bag);
+  const go = input({ x: 1 });
+  for (let k = 0; k < 300; k++) step(p, go, lv, bag);
+  ok("releasing down returns control", p.gsp > K.topSpeed * 0.9, `${p.gsp.toFixed(0)} px/s after 2.5s`);
 }
-
-// --- spindash --------------------------------------------------------------
 {
+  // And jumping straight out of a crouch is a jump, not anything else.
   const lv = parseLevel(field());
   const p = newPlayer(lv);
   const bag: Ring[] = [];
   for (let k = 0; k < 20; k++) step(p, NO, lv, bag);
-  const charge = input({ down: true, jump: true, jumpDown: true });
-  for (let k = 0; k < 40; k++) {
-    step(p, charge, lv, bag);
-    charge.jumpDown = k % 6 === 4;
-  }
-  step(p, input({ x: 1 }), lv, bag);
-  ok("spindash releases 240..360 px/s", p.gsp >= 239 && p.gsp <= 361, `${p.gsp.toFixed(0)} px/s`);
-  ok("spindash beats running", p.gsp > K.topSpeed, `${(p.gsp / K.topSpeed).toFixed(2)}x top speed`);
+  for (let k = 0; k < 60; k++) step(p, input({ down: true }), lv, bag);
+  step(p, input({ down: true, jump: true, jumpDown: true }), lv, bag);
+  ok("down+jump is just a jump", !p.grounded && p.vy < -K.jumpForce * 0.9, `vy ${p.vy.toFixed(0)}`);
 }
 
 // --- a player, roughly -----------------------------------------------------
 // Nothing clever: hold right, roll into anything that descends, jump when the floor
-// ahead stops. Deliberately stupid - it never spindashes and never brakes - so what it
+// ahead stops. Deliberately stupid - it never brakes and never backs up - so what it
 // gets through is a floor on what the act asks of a person, not a ceiling.
 //
 // The floor probe cannot be solidAt: that deliberately reports one-way platforms as
