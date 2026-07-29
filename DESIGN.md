@@ -107,6 +107,20 @@ Ball form covers rolling *and* jumping - in Sonic they are the same smaller body
 is why a jump clears gaps a run cannot. Entering it sinks the center 2.5px so the feet
 stay put.
 
+**Crouching is a fifth state, and it is load-bearing rather than flavour.** Holding down
+while too slow to roll ignores left/right entirely. Without that suppression you
+accelerate back over the 15 px/s roll threshold, enter the ball, roll friction drops you
+under it again, and the body flips height 2.5px at a time - measured **145 flips in two
+seconds** of holding down and a direction. It also makes the spindash reachable at all:
+the crouch settles at a standstill, so down+jump finds `gsp` under the threshold instead
+of racing past it. Building speed from a standstill is the spindash's whole job, and
+before this it could not be entered while holding the direction you wanted to leave in.
+
+**Dying is not restarting.** `kill` puts you back at the last checkpoint and leaves the
+run intact, including `done` - which `step` early-returns on, so calling it on a cleared
+act reset the position into a sim that was no longer ticking. `restart` clears the run:
+spawn, timer, rings, checkpoints, scattered rings.
+
 ## 5. Collision: floor mode only, angles to 63 degrees
 
 Per-tile angles are not optional - the slope factor, the landing conversion and the

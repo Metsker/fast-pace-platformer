@@ -8,7 +8,7 @@
 // The second runs the real act, because the seams between chunks are where a body
 // wedges and no synthetic slope reproduces them.
 
-import { K, R, STEP, TILE, kill, newPlayer, parseLevel, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
+import { K, R, STEP, TILE, kill, newPlayer, parseLevel, restart, step, type Input, type Level, type Player, type Ring } from "../src/sim.ts";
 import { ACT_1 } from "../src/levels.ts";
 
 const DEG = Math.PI / 180;
@@ -222,6 +222,47 @@ near("roll cost on 26.6 up, px/s2", rollAccel(-1, 320), -(K.slopeRollUp * Math.s
   ok("and slides back while holding on", p.x < peak - TILE, `fell back ${((peak - p.x) / TILE).toFixed(1)} tiles`);
 }
 
+// --- crouching -------------------------------------------------------------
+{
+  // Holding down while too slow to roll has to settle. If left/right still accelerates
+  // you, you cross the roll threshold, roll friction drops you back under it, and the
+  // body flips height 2.5px at a time - 145 times in two seconds, which is what the
+  // player felt. The spindash also becomes unreachable, because gsp is never under the
+  // threshold on the frame you press jump.
+  const lv = parseLevel(field());
+  const p = newPlayer(lv);
+  const bag: Ring[] = [];
+  for (let k = 0; k < 20; k++) step(p, NO, lv, bag);
+  const hold = input({ x: 1, down: true });
+  let flips = 0;
+  let was = p.rolling;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let k = 0; k < 240; k++) {
+    step(p, hold, lv, bag);
+    if (p.rolling !== was) ((flips++), (was = p.rolling));
+    lo = Math.min(lo, p.y);
+    hi = Math.max(hi, p.y);
+  }
+  ok("crouching does not flip ball form", flips === 0, `${flips} flips, body swing ${(hi - lo).toFixed(2)}px`);
+  ok("crouching holds you still", Math.abs(p.gsp) < 1, `${p.gsp.toFixed(2)} px/s`);
+}
+{
+  // And the payoff: you can still build speed from a standstill, holding a direction.
+  const lv = parseLevel(field());
+  const p = newPlayer(lv);
+  const bag: Ring[] = [];
+  for (let k = 0; k < 20; k++) step(p, NO, lv, bag);
+  const charge = input({ x: 1, down: true, jump: true, jumpDown: true });
+  for (let k = 0; k < 60; k++) {
+    step(p, charge, lv, bag);
+    charge.jumpDown = k % 6 === 4;
+  }
+  const revved = p.spinning;
+  step(p, input({ x: 1 }), lv, bag);
+  ok("can spindash while holding a direction", revved && p.gsp > K.topSpeed, `${p.gsp.toFixed(0)} px/s`);
+}
+
 // --- spindash --------------------------------------------------------------
 {
   const lv = parseLevel(field());
@@ -335,6 +376,18 @@ console.log("\nact 1  (a bot holding right, rolling into descents, jumping holes
   console.log(`  took the shelf     ${high < 16 * TILE ? "yes" : "no"}`);
   ok("act 1 is completable", p.done, `${secs.toFixed(1)}s`);
   ok("nothing wedges", secs < 190);
+
+  // A cleared act has to be replayable. `step` early-returns on `done`, so anything
+  // that resets the position without clearing it leaves a sim that is not ticking.
+  restart(p, lv, bag);
+  const cleared = { done: p.done, time: p.time, rings: p.rings, at: p.x };
+  let ran = 0;
+  for (let k = 0; k < 600; k++) ((bot(p, i, lv, bag)), (ran = p.x - cleared.at));
+  ok(
+    "a cleared act restarts",
+    !cleared.done && cleared.time === 0 && cleared.rings === 0 && Math.abs(cleared.at - lv.spawn.x) < 1 && ran > TILE * 4,
+    `back at spawn, moved ${(ran / TILE).toFixed(1)} tiles`,
+  );
 }
 
 console.log(failures ? `\n${failures} FAILED\n` : "\nall checks passed\n");

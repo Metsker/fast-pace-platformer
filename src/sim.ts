@@ -293,6 +293,20 @@ export function kill(p: Player, lv: Level): void {
   for (const r of lv.rings) r.taken = false;
 }
 
+// Dying is not restarting. `kill` puts you back at the last checkpoint and leaves the
+// run intact - including `done`, which `step` early-returns on, so calling it on a
+// cleared act reset the position into a sim that was no longer ticking.
+export function restart(p: Player, lv: Level, scattered: Ring[]): void {
+  p.respawnX = lv.spawn.x;
+  p.respawnY = lv.spawn.y;
+  for (const c of lv.checkpoints) c.hit = false;
+  kill(p, lv);
+  scattered.length = 0;
+  p.deaths = 0;
+  p.time = 0;
+  p.done = false;
+}
+
 // Ball form covers both rolling and jumping - in Sonic they are the same smaller body,
 // which is why a jump clears gaps a run cannot. The center sinks so the feet stay put.
 function ball(p: Player, on: boolean): void {
@@ -426,17 +440,27 @@ function groundStep(p: Player, i: Input, xin: number): void {
   const f = !p.rolling ? K.slopeRun : Math.sign(p.gsp) === Math.sign(s) ? K.slopeRollUp : K.slopeRollDown;
   p.gsp -= f * s * STEP;
 
+  // Crouching: holding down while too slow to roll. Sonic ignores left/right entirely
+  // here, and that is load-bearing rather than flavour. Without it you accelerate back
+  // over the roll threshold, enter the ball, roll friction drops you under it again,
+  // and the body flips height by 2.5px every step or two - measured 145 flips in two
+  // seconds of holding down and a direction, which is what read as jarring.
+  //
+  // It is also what makes the spindash reachable: the crouch settles at a standstill,
+  // so down+jump finds `gsp` under the threshold instead of racing past it.
+  const move = i.down && !p.rolling ? 0 : xin;
+
   const acc = p.rolling ? 0 : K.accel;
   const dec = p.rolling ? K.rollDecel : K.decel;
   const fri = p.rolling ? K.rollFriction : K.friction;
-  if (xin && p.gsp !== 0 && Math.sign(xin) !== Math.sign(p.gsp)) {
+  if (move && p.gsp !== 0 && Math.sign(move) !== Math.sign(p.gsp)) {
     p.gsp -= Math.sign(p.gsp) * dec * STEP;
-  } else if (xin && Math.abs(p.gsp) < K.topSpeed) {
-    p.gsp += xin * acc * STEP;
+  } else if (move && Math.abs(p.gsp) < K.topSpeed) {
+    p.gsp += move * acc * STEP;
     if (Math.abs(p.gsp) > K.topSpeed) p.gsp = Math.sign(p.gsp) * K.topSpeed;
   }
   // Rolling keeps bleeding to friction even under input; running only coasts when idle.
-  if (!xin || p.rolling) {
+  if (!move || p.rolling) {
     const d = fri * STEP;
     p.gsp = Math.abs(p.gsp) <= d ? 0 : p.gsp - Math.sign(p.gsp) * d;
   }

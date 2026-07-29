@@ -1,7 +1,7 @@
 import { Application, Text } from "pixi.js";
 import { loadGlyphs } from "./gfx/glyphs.ts";
 import { PALETTE } from "./tilemap.ts";
-import { K, STEP, TILE, kill, newPlayer, parseLevel, step, type Input, type Ring } from "./sim.ts";
+import { K, STEP, TILE, newPlayer, parseLevel, restart, step, type Input, type Ring } from "./sim.ts";
 import { ACT_1 } from "./levels.ts";
 import { buildView, syncView } from "./render.ts";
 
@@ -41,7 +41,7 @@ addEventListener("keydown", (e) => {
   if (e.repeat) return;
   held.add(e.code);
   if (JUMP.includes(e.code)) input.jumpDown = true;
-  if (e.code === "KeyR") kill(player, level);
+  if (e.code === "KeyR") restart(player, level, scattered);
   e.preventDefault();
 });
 addEventListener("keyup", (e) => held.delete(e.code));
